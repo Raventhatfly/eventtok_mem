@@ -25,7 +25,9 @@ training a memoryless one costs, at any history length.
 | [`docs/DESIGN.md`](docs/DESIGN.md) | the architecture, the maths, the training protocol, the experiment plan, the risks |
 | [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) | what already exists (a lot), where the real gap is, and what **not** to call this |
 | [`docs/MECHANISMS.md`](docs/MECHANISMS.md) | the ten literature findings that constrain the build, plus hard capacity ceilings |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | E1: multi-timescale retention, measured |
+| [`docs/STDP_RULES.md`](docs/STDP_RULES.md) | what makes STDP work, its honest ceilings, and the post-mortem on E2 |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | E1: multi-timescale retention, measured. E2: the STDP control, still open |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | what to do next, in order, with the open decisions |
 
 ## Code
 
@@ -34,18 +36,30 @@ spikebank/
   neurons.py         heterogeneous ALIF bank, one-clock (1 SNN step == 1 control step)
   encoder.py         novelty-gated sparse spike encoder (predictive residual + k-WTA lift)
   stdp.py            trace STDP with per-bank windows, soft bounds, L1 synaptic scaling
-  test_retention.py  the precondition test: does the tau-hierarchy actually retain?
+  test_retention.py     E1 -- does the tau-hierarchy actually retain?
+  test_stdp_control.py  E2 -- does STDP beat frozen-random recurrence?
 ```
 
 ```bash
 python -m spikebank.test_retention
+python -m spikebank.test_stdp_control
 ```
 
 ## Status
 
-Design + reference implementation + one measured result (E1). **Not yet integrated with a
-Diffusion Policy.** The next milestone is the go/no-go control in `DESIGN.md` §8.1: STDP vs.
-frozen-random recurrence. If STDP does not beat a random reservoir, the project re-scopes.
+Design + reference implementation + two measured results. **Not yet integrated with a Diffusion
+Policy.**
+
+- **E1 established the core claim in miniature:** the tau-spectrum genuinely composes — the
+  whole-bank readout recovers a cue at lag 20 (0.98) where no single sub-bank exceeds 0.41. But
+  the horizon is ~2 s, not the ~60 s the slowest bank nominally implies: **interference, not leak,
+  is the binding constraint.** Decay alone does not buy long memory.
+- **E2, the go/no-go control, is still open.** Neither STDP nor frozen-random recurrence clears
+  chance on the synthetic order-memory task, so the comparison measures nothing yet. Two rounds of
+  fixes (fan-in sparsity, then the Nessler-compliant `exp(-w)` rule) removed real pathologies
+  without changing that. `ROADMAP.md` Phase 0 is the blocking work.
+
+Nothing here should be read as evidence for or against STDP yet.
 
 ## Where this sits
 
