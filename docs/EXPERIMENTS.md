@@ -117,3 +117,27 @@ Recurrent weight density: random 0.099 → **STDP 0.996**.
 
 **Status: the go/no-go question is still open.** That is the right thing to know on day one, and
 it is exactly why `DESIGN.md` puts this experiment before any Diffusion Policy integration.
+
+### E2b — with fix #1 applied (hard fan-in cap on `W`)
+
+Added a hard fan-in cap (top-24 presynaptic partners per postsynaptic neuron) to `stdp.py`.
+
+| lag | frozen-random | STDP | Δ |
+|---|---|---|---|
+| 10 | 0.119 | 0.176 | +0.057 |
+| 20 | 0.186 | 0.182 | −0.004 |
+| 40 | 0.238 | 0.086 | −0.152 |
+| 80 | 0.326 | 0.168 | −0.158 |
+| 119 | 0.146 | 0.158 | +0.012 |
+
+Density: random 0.099, **STDP 0.094** — the pathology is fixed.
+
+**But the control is still inconclusive, and for the reason predicted: neither arm clears chance.**
+The probe cannot decode task identity from either bank, so there is nothing for the comparison to
+measure. Fix #5 (make the task solvable by *something* first) is now the blocking item, ahead of
+fixes #2–#4. Concretely: longer phase dwell, more phases, a larger bank, and a sanity ceiling
+(probe an explicit frame-history buffer) to confirm the task is decodable at all before comparing
+memory architectures on it.
+
+**Do not read either E2 table as evidence against STDP.** They are evidence that the harness is
+not yet sensitive enough to answer the question.

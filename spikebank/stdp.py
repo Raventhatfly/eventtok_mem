@@ -24,8 +24,13 @@ class STDP:
         a_minus: float = 0.6,
         w_max: float = 1.0,
         trace_steps: float = 3.0,
+        fan_in: int = 24,
     ) -> None:
         self.bank, self.eta, self.a_minus, self.w_max = bank, eta, a_minus, w_max
+        # hard fan-in cap: without it, potentiation + L1 normalisation drives W to ~100%
+        # density and the "learned" recurrence degenerates into a uniform low-pass filter
+        # (see docs/EXPERIMENTS.md E2).
+        self.fan_in = fan_in
         # per-sub-bank trace decay, tied to that bank's nominal membrane tau
         self.alpha = [
             float(torch.exp(torch.tensor(-1.0 / (trace_steps * b.tau_mem / bank.dt))))
@@ -61,6 +66,10 @@ class STDP:
             w.add_(dw / sp.shape[0])
             w.clamp_(0.0, self.w_max)
             w.fill_diagonal_(0.0)                            # no self-excitation
+            if self.fan_in and self.fan_in < w.shape[0]:     # keep recurrence sparse
+                keep = w.topk(self.fan_in, dim=0).indices
+                mask = torch.zeros_like(w).scatter_(0, keep, 1.0)
+                w.mul_(mask)
             w.div_(w.sum(0, keepdim=True).clamp_min(1e-3))   # L1 synaptic scaling
 
             self.p[m] = a * p + sp
