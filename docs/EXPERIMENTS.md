@@ -141,3 +141,30 @@ memory architectures on it.
 
 **Do not read either E2 table as evidence against STDP.** They are evidence that the harness is
 not yet sensitive enough to answer the question.
+
+### E2c — with the Nessler-compliant rule
+
+Replaced the linear `(w_max − w)` bound with **`exp(−w)` potentiation** and set LTD/LTP to
+**1:100** (Diehl & Cook's released values). See `STDP_RULES.md` §0 for why both matter.
+
+| lag | frozen-random | STDP | Δ |
+|---|---|---|---|
+| 10 | 0.119 | 0.131 | +0.012 |
+| 20 | 0.186 | 0.154 | −0.031 |
+| 40 | 0.238 | 0.221 | −0.018 |
+| 80 | 0.326 | 0.219 | −0.107 |
+| 119 | 0.146 | 0.176 | +0.029 |
+
+Unchanged conclusion, as predicted: **the harness, not the rule, is the blocker.** Neither arm
+clears chance, so no learning-rule change can show up. The remaining preconditions from
+`STDP_RULES.md` §0 are still unmet — **soft/stochastic WTA with a temperature** (we use hard
+top-k, and Nessler's theorem needs the soft version because the WTA *is* the normalisation) and
+**population-coded inputs**. Those are changes to `neurons.py` and `encoder.py`, not `stdp.py`.
+
+**E3 (next session), in order:**
+1. Add a sanity ceiling — probe an explicit frame-history buffer — to prove the task is decodable
+   at all. **Do not compare memory architectures on a task nothing solves.**
+2. Softmax WTA with temperature `T` (SoftHebb) replacing hard top-k.
+3. Population-code the proprio/low-dimensional channel.
+4. Non-normal chain wiring between sub-banks (`MECHANISMS.md` §2).
+5. Only then re-run the STDP-vs-random control.

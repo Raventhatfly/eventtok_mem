@@ -21,7 +21,7 @@ class STDP:
         self,
         bank,
         eta: float = 2e-3,
-        a_minus: float = 0.6,
+        a_minus: float = 100.0,   # LTD/LTP ratio ~ 1:100 (Diehl & Cook 2015 source)
         w_max: float = 1.0,
         trace_steps: float = 3.0,
         fan_in: int = 24,
@@ -62,7 +62,11 @@ class STDP:
             # depression: pre-spike (now) x post-trace (past)    -> anticausal B->A
             dep = sp.t() @ q
 
-            dw = self.eta * modulator * ((self.w_max - w) * pot - self.a_minus * w * dep)
+            # exp(-w) potentiation is what makes the fixed point a normalised conditional
+            # probability rather than a runaway correlation (Nessler et al. 2013); a linear
+            # (w_max - w) bound drove W to 99.6% density in EXPERIMENTS.md E2.
+            # LTD/LTP ratio ~1:100 follows Diehl & Cook's released hyperparameters.
+            dw = self.eta * modulator * (torch.exp(-w / self.w_max) * pot - self.a_minus * w * dep)
             w.add_(dw / sp.shape[0])
             w.clamp_(0.0, self.w_max)
             w.fill_diagonal_(0.0)                            # no self-excitation
