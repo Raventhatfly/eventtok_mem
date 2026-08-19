@@ -62,3 +62,58 @@ homeostatic rate from 0.01 to 0.5, fixed it. This is a concrete instance of Zenk
 **Next.** E2 = same protocol with STDP enabled vs. frozen-random recurrence (the go/no-go control,
 DESIGN.md §8.1). E3 = the same retention curve on real RoboMemArena episodes with MemProbe facts
 as the probe target.
+
+---
+
+## E2 — STDP vs. frozen-random recurrence, first pass (2026-08-18)
+
+**Question.** The go/no-go control of `DESIGN.md` §8.1. Does STDP beat a frozen-random recurrent
+matrix at equal size?
+
+**Protocol** (`spikebank/test_stdp_control.py`). Each episode has a latent task id. A task fixes a
+*phase-transition order* over 6 shared phases; each phase emits a noisy pattern. Every task draws
+frames from the **same pool** — only the order differs — so the task is decodable *only* from
+remembered transitions, never from the current frame. This is precisely what STDP on recurrent
+weights is supposed to learn. 3 unsupervised STDP passes, then freeze, then linear-probe the task
+id at increasing lag. 6 tasks, chance = 0.167.
+
+**Result.**
+
+| lag | frozen-random | STDP | Δ |
+|---|---|---|---|
+| 10 | 0.119 | 0.238 | +0.119 |
+| 20 | 0.186 | 0.111 | −0.074 |
+| 40 | 0.238 | 0.252 | +0.014 |
+| 80 | 0.326 | 0.037 | −0.289 |
+| 119 | 0.146 | 0.225 | +0.078 |
+
+Recurrent weight density: random 0.099 → **STDP 0.996**.
+
+**Reading it honestly.**
+
+- **This control is not yet decisive, and should not be reported as one.** Both arms hover near
+  chance (0.12–0.33 against 0.167), with signs of Δ flipping across lags — that is noise, not a
+  result. Neither arm actually solves the task, so the comparison is underpowered.
+- **The informative signal is the weight densification.** STDP drove the recurrent matrix from
+  10 % to **99.6 % density**. That is the textbook pathology: potentiation plus L1 row
+  normalisation spreads weight across all inputs and destroys selectivity, so the "learned"
+  recurrence is close to a uniform low-pass filter — which is *worse* than a sparse random matrix
+  because it is less non-normal (cf. Ganguli et al. 2008, `MECHANISMS.md` §2).
+- Diagnosis matches Zenke, Gerstner & Ganguli (2017): the stabilising machinery is on the wrong
+  timescale relative to the Hebbian instability. `stdp.py` has soft bounds, an L1 row constraint
+  and a depression term, but **no sparsity constraint on `W` itself** and no fast inhibitory
+  plasticity.
+
+**Fixes to try before calling the control, in order.**
+1. **Sparsify `W`** — hard top-k per postsynaptic neuron after each update, or a pruning threshold.
+   Keeping recurrence at ~5–10 % density is the single most likely fix.
+2. **Raise the depression term** `a_minus` (currently 0.6) — the potentiation/depression balance is
+   what sets the stationary weight distribution (Fusi & Abbott 2007).
+3. **Non-normal chain wiring** (`MECHANISMS.md` §2) — currently block-diagonal, i.e. exactly the
+   normal-network regime with an O(1) memory ceiling.
+4. **Delta-rule writes** instead of plain additive potentiation (Schlag et al. 2021).
+5. Make the task easier first (more phases, longer dwell) so *some* arm clears chance — a control
+   between two failing arms measures nothing.
+
+**Status: the go/no-go question is still open.** That is the right thing to know on day one, and
+it is exactly why `DESIGN.md` puts this experiment before any Diffusion Policy integration.
