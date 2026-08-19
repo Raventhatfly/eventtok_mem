@@ -27,6 +27,7 @@ training a memoryless one costs, at any history length.
 | [`docs/MECHANISMS.md`](docs/MECHANISMS.md) | the ten literature findings that constrain the build, plus hard capacity ceilings |
 | [`docs/STDP_RULES.md`](docs/STDP_RULES.md) | what makes STDP work, its honest ceilings, and the post-mortem on E2 |
 | [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | E1: multi-timescale retention, measured. E2: the STDP control, still open |
+| [`docs/DP_INTEGRATION.md`](docs/DP_INTEGRATION.md) | verified Diffusion Policy injection points, and the S4D-Real warning |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | what to do next, in order, with the open decisions |
 
 ## Code
@@ -60,6 +61,11 @@ Policy.**
   without changing that. `ROADMAP.md` Phase 0 is the blocking work.
 
 Nothing here should be read as evidence for or against STDP yet.
+
+**Open design question, flagged loudly:** a bank differing only in membrane decay is `S4D-Real`,
+the weakest state-space initialisation. Timescale diversity in the SSM literature lives in the
+per-channel timestep `Δ` and in oscillation frequency, not in the decay rate. `DP_INTEGRATION.md`
+§0 has the fix — it is small, but it should be settled before the Phase 1 control.
 
 ## Where this sits
 

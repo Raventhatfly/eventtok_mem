@@ -4,7 +4,15 @@
 **Companion docs:** `PRIOR_ART.md` (positioning), `MECHANISMS.md` (what the literature forces),
 `EXPERIMENTS.md` (E1 retention result). **Read the "revisions" box below before implementing.**
 
-> ### Revisions after the literature sweep (v0.1 → v0.2)
+> ### Revisions after the literature sweep (v0.1 → v0.3)
+> 0. **⚠️ The founding premise is the weakest point in the SSM design space.** "A bank of LIF
+>    neurons differing only in membrane decay" is exactly `S4D-Real` — the initialisation S4D
+>    reports as *worst*. In the winning variants (`S4D-Lin`/`S4D-Inv`) decay is **fixed** at
+>    `Re(A_n) = −1/2` and diversity lives in **`Δ` (per-channel, log-uniform over 3 decades)** and
+>    **`Im(A_n)` (oscillation frequency)**. This independently predicts E1's ~2 s ceiling. Fix:
+>    add per-neuron `Δ` heterogeneity (one line, free), and ablate **resonate-and-fire** neurons,
+>    whose dynamics `ż = (b+iω)z + I` *are* one diagonal-SSM channel plus a spike readout. See
+>    `DP_INTEGRATION.md` §0 — **resolve before Phase 1.**
 > 1. **Block-diagonal recurrence is wrong.** Ganguli et al. (PNAS 2008): normal networks have
 >    O(1) *total* memory; only non-normal (feedforward-chain) connectivity is extensive in N.
 >    Wire the sub-banks fast→medium→slow, recurrence within-bank only. (§5.1)
@@ -18,7 +26,12 @@
 > 5. **Do not name this "Spiking Diffusion Policy"** — SDP (arXiv:2409.11195) exists and spikes
 >    the *denoiser*. Ours is the inverse. See `PRIOR_ART.md` §1.
 > 6. **The baselines are PTP / VQ-Memory / DSSP**, not vanilla DP. Beating `DP(To=2)` proves
->    nothing. (§8.2)
+>    nothing — and **TFP (arXiv:2607.08283)** already does an input-modulated leaky-integrator
+>    belief injected via AdaLN into a flow-matching decoder. Closest published neighbour. (§8.2)
+> 8. **"History hurts" has been revised.** PTP finds diffusion policies show the *opposite* of
+>    copycat; the MIT long-context study finds naive context scaling "not as brittle as
+>    advertised". Their FiLM criticism is that conditioning width grows with history — **a
+>    fixed-width spiking bank sidesteps exactly that**, which is a real differentiator. (§6.2)
 > 7. **Empirically (E1): decay alone tops out at ~2 s of retention** — interference, not leak, is
 >    the binding constraint. Long-horizon memory must come from learned recurrence, which raises
 >    the stakes on the §8.1 control.
