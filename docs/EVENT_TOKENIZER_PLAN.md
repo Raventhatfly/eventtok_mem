@@ -137,6 +137,28 @@ Five clean events with text labels, for free, on every episode of all 16 tasks.
 - RoboMME ships reference implementations for both **Diffusion Policy** (lerobot format) and
   **MemoryVLA** (TFDS) on this exact data — the policy baseline and the dedup baseline both exist.
 
+### Our own pipeline is the straw-man — and that is an asset
+
+`/n/netscratch/ydu_lab/Lab/wfy/ckpts/robomme_policy_ckpt/` holds
+`evaluation_moviechat_qformer_context_full` and `_requeue`, plus `runs/`. So a memory-augmented
+policy using **MovieChat QFormer context** has already been trained and evaluated on RoboMME here.
+
+MovieChat *is* a token-merging memory — it consolidates similar visual tokens to fit long video
+into a fixed budget. That is precisely the mechanism this paper argues destroys count information.
+
+Two consequences:
+1. **The dedup baseline is not hypothetical.** The pipeline exists, the eval harness works, and
+   numbers may already be sitting in those run directories. Check them before rebuilding anything.
+2. **The narrative writes itself, and it is credible because it is self-critical:** we built a
+   token-merging memory for this benchmark; here is the failure mode merging has on counting
+   tasks; here is the replacement. Critiquing one's own prior approach reads far better than
+   critiquing someone else's.
+
+First thing to do in week 1 alongside E1: pull the per-task breakdown from those existing runs and
+check whether `PickXtimes` / `SwingXtimes` / `BinFill` underperform the non-counting tasks. **If
+the counting tasks are already the weak ones, that is the paper's opening figure and it costs
+nothing to produce.**
+
 ### Positioning caution
 
 MME-VLA already trains a **VLM subgoal predictor** on these annotations. So "produce subgoal text"
