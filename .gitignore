@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.egg-info/
+.pytest_cache/
+# local artifacts
+runs/
+outputs/
+cache/
+*.npy
+*.npz

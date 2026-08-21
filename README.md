@@ -1,74 +1,61 @@
-# SpikeBank — STDP-trained multi-timescale spiking memory for Diffusion Policies
+# eventtok_mem
 
-A visuomotor policy sees the world as a *stream*. Backprop-through-time over that stream is
-expensive, non-causal, and impossible to run at deployment. This project gives a robot policy a
-**spiking memory bank** written **online and gradient-free** by STDP, and read by a small learned
-head that conditions an otherwise-standard **Diffusion Policy**.
+**Event tokens as robot policy memory.**
 
-The bank is a set of LIF populations with **heterogeneous membrane decay constants** spanning
-three decades, so one module holds three physically distinct kinds of memory:
+Tokenize a robot's own experience into a short sequence of **discrete event tokens**, keep them in an
+**append-only** log, and feed that log back to the policy as context. The log is a sentence in a learned
+language, so a language model is the natural consumer.
 
-| substrate | variable | timescale | memory type | plasticity |
-|---|---|---|---|---|
-| membrane potential | `V` | 0.1–1 s | **iconic** — what I am seeing now | none (dynamics) |
-| adaptation / STP | `a` | 1–60 s | **working** — what happened this episode | activity-driven, decays |
-| synaptic weights | `W` | episode → dataset | **semantic** — what usually follows what | **STDP** |
+## The claim
 
-Because no gradient crosses the spike layer, the memory trace for a whole dataset can be
-**precomputed and cached** — training a memory-augmented Diffusion Policy costs about what
-training a memoryless one costs, at any history length.
+> Boundary-coupled variable-length **quantization** feeding an **append-only, count-preserving** event
+> token log, delivered as **text** so it transfers across policies without adaptation.
+
+Two supporting arguments:
+
+1. **Token sequences preserve repetition; consolidation destroys it.** Methods that merge redundant
+   entries discard exactly what counting needs. Ask a captioner to summarise three scoops and it says
+   "scooping"; a token log says `scoop scoop scoop`. *Compression is fine — deduplication is the killer.*
+2. **Text-valued tokens transfer with zero adaptation.** Every modern VLA has a language channel, so the
+   same memory string drops into π₀.₅, OpenVLA, RDT with no adapter, no projector, and no shared
+   embedding space.
+
+## How it works
+
+```
+transitions (k=20 frames)     vision features + action chunk
+        │
+   transformer + register tokens  →  FSQ (512 codes)
+        │                            trained by dual heads:
+        │                              A: (feat_t, code) → feat_{t+k}   cosine
+        │                              B: code           → action chunk  L1
+        │                            never pixel reconstruction
+   per-transition code stream
+        │
+   BPE  (self-merges forbidden; event boundaries are hard barriers)
+        │
+   variable-length event tokens  →  named by modal subgoal  →  prompt text
+```
+
+Counting falls out: two occurrences of an event are two occurrences of a token, in sequence. No
+amplitude, no decay, no retrieval.
 
 ## Docs
 
 | file | contents |
 |---|---|
-| [`docs/DESIGN.md`](docs/DESIGN.md) | the architecture, the maths, the training protocol, the experiment plan, the risks |
-| [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) | what already exists (a lot), where the real gap is, and what **not** to call this |
-| [`docs/MECHANISMS.md`](docs/MECHANISMS.md) | the ten literature findings that constrain the build, plus hard capacity ceilings |
-| [`docs/STDP_RULES.md`](docs/STDP_RULES.md) | what makes STDP work, its honest ceilings, and the post-mortem on E2 |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | E1: multi-timescale retention, measured. E2: the STDP control, still open |
-| [`docs/DP_INTEGRATION.md`](docs/DP_INTEGRATION.md) | verified Diffusion Policy injection points, and the S4D-Real warning |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | what to do next, in order, with the open decisions |
-
-## Code
-
-```
-spikebank/
-  neurons.py         heterogeneous ALIF bank, one-clock (1 SNN step == 1 control step)
-  encoder.py         novelty-gated sparse spike encoder (predictive residual + k-WTA lift)
-  stdp.py            trace STDP with per-bank windows, soft bounds, L1 synaptic scaling
-  test_retention.py     E1 -- does the tau-hierarchy actually retain?
-  test_stdp_control.py  E2 -- does STDP beat frozen-random recurrence?
-```
-
-```bash
-python -m spikebank.test_retention
-python -m spikebank.test_stdp_control
-```
+| [`docs/EVENT_TOKENIZER_PLAN.md`](docs/EVENT_TOKENIZER_PLAN.md) | the research plan — design, experiments, prior art, risks |
+| [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) | positioning and the novelty threats (WeaveLA, KEMO, EventVLA) |
+| [`docs/_archive_event_tokenizer_v1.md`](docs/_archive_event_tokenizer_v1.md) | exploratory version, kept for the reasoning trail |
+| `docs/archive/` | the parked spiking-memory line (see below) |
 
 ## Status
 
-Design + reference implementation + two measured results. **Not yet integrated with a Diffusion
-Policy.**
+Codebase under construction. See the plan for milestones M0–M4.
 
-- **E1 established the core claim in miniature:** the tau-spectrum genuinely composes — the
-  whole-bank readout recovers a cue at lag 20 (0.98) where no single sub-bank exceeds 0.41. But
-  the horizon is ~2 s, not the ~60 s the slowest bank nominally implies: **interference, not leak,
-  is the binding constraint.** Decay alone does not buy long memory.
-- **E2, the go/no-go control, is still open.** Neither STDP nor frozen-random recurrence clears
-  chance on the synthetic order-memory task, so the comparison measures nothing yet. Two rounds of
-  fixes (fan-in sparsity, then the Nessler-compliant `exp(-w)` rule) removed real pathologies
-  without changing that. `ROADMAP.md` Phase 0 is the blocking work.
+## Archive
 
-Nothing here should be read as evidence for or against STDP yet.
-
-**Open design question, flagged loudly:** a bank differing only in membrane decay is `S4D-Real`,
-the weakest state-space initialisation. Timescale diversity in the SSM literature lives in the
-per-channel timestep `Δ` and in oscillation frequency, not in the decay rate. `DP_INTEGRATION.md`
-§0 has the fix — it is small, but it should be settled before the Phase 1 control.
-
-## Where this sits
-
-Target benchmark is **RoboMemArena** (26 memory-centric LIBERO-compatible manipulation tasks,
-CSR/TSR). The memory-probing evaluation reuses **MemProbe**'s deterministic trajectory-derived
-facts as linear-probe targets, giving a per-sub-bank memory-retention curve on real robot data.
+This repo began as `ssn_robotic_memory`, an STDP-trained spiking memory bank. That line is parked, not
+deleted — `archive/spikebank/` has the implementation and `docs/archive/` the design notes and measured
+results. Two findings from it survive into the current design: novelty gating as an event-boundary
+signal, and nested-dropout ordering for coarse-to-fine event tokens.
