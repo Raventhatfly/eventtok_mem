@@ -482,6 +482,80 @@ Validate boundaries against `simple_subgoal` transitions, UVD, and the PerAct he
 
 ---
 
+## 4d. Novelty threats — checked 2026-08-20, and one is serious
+
+### WeaveLA — read this before committing
+
+**"WeaveLA: Event Driven Cross-Subtask Latent Memory Weaving for Repetitive Robot Manipulation"**,
+Shoujing Zhu et al., 16 June 2026, [arXiv:2606.17463](https://arxiv.org/abs/2606.17463).
+
+- **RoboMME benchmark.** Same one.
+- **π₀.₅ backbone.** Same one.
+- **"Repetitive Robot Manipulation."** Same problem.
+- Detects **subtask completion** as the event trigger, compresses the finished segment into
+  **latent tokens** via query-driven attention pooling, injects them into the next subtask's action
+  generation. Frozen base policy, minimal overhead.
+- **`SwingXtimes` (N=3): 0 % → 47.8 %.** One of our two target counting tasks.
+- No degradation on single-execution episodes; gains appear only where cross-subtask information
+  is required.
+
+**This occupies "event-triggered memory for repetitive manipulation on RoboMME."** It was posted
+two months ago. Treat the slot as taken and re-derive what is left.
+
+### What is still ours
+
+Three axes survive, and they are narrower than they were:
+
+1. **Discrete vocabulary vs. continuous latents.** WeaveLA pools into continuous latents. Discrete
+   codes buy nameability, counting by token occurrence, a bounded vocabulary, interpretability,
+   and text transfer. This is the main remaining axis.
+2. **Append-only log vs. one-step handoff.** WeaveLA *weaves* the previous subtask into the next.
+   That is a handoff, not a record of everything that has happened. A token log accumulates.
+3. **Zero-adaptation cross-architecture transfer.** WeaveLA's latents are π₀.₅-specific; text
+   tokens are not.
+
+### The wedge — and it is testable
+
+**A latent handoff should not scale in N; a token log trivially does.** WeaveLA reports N=3. Ask
+what happens at N=5, N=7, N=10. A fixed-size pooled latent has to encode "how many" in its
+magnitude or geometry; an append-only token sequence just gets longer.
+
+So the count-extrapolation experiment (E5) is promoted from "nice ablation" to **the central
+experiment**. If we match WeaveLA at N=3 and beat it at N≥5, the paper stands on a mechanism
+argument rather than a leaderboard delta.
+
+Also worth noting: WeaveLA's memory-free baseline is **0 %** on `SwingXtimes`. That confirms the
+motivation — counting tasks are genuinely broken — and it means the interesting comparison is
+against WeaveLA, not against a memoryless policy.
+
+### The other two, lower threat
+
+**KEMO — "Event-Driven Keyframe Memory for Robot Manipulation"**, Yihan Zeng et al., 22 June 2026,
+[arXiv:2606.23589](https://arxiv.org/abs/2606.23589). Combines robot kinematics with visual
+filtering to detect events, encodes selected keyframes as "compact temporally ordered memory
+tokens," fuses via cross-attention + gated residual. Real-world dual-arm, 830–2846-step
+trajectories, **+23.6 % TSR / +34.1 % SCR** over memory-free. Ablations show event-driven selection
+beats uniform sampling and recent-frame retention. **Does not address repetition or counts** — it
+*selects* task-relevant keyframes, which is a filtering criterion, and filtering is where counts
+die. Its tokens are keyframe embeddings, not a learned discrete vocabulary.
+
+**OmniAct** ([arXiv:2606.27251](https://arxiv.org/abs/2606.27251), Shi, Huai, Wang et al., 25 June
+2026). "Adaptive hierarchical memory with event-boundary-driven compression for sub-linear context
+growth," near-flat token consumption over 100k+ accumulated interaction tokens, 40 real-world
+long-horizon tasks with IoT coordination. Omnimodal agent scope rather than a manipulation policy;
+mechanism not extractable from the abstract. **Pull the PDF before writing related work.**
+
+### Revised novelty statement
+
+> Boundary-coupled variable-length **quantization** feeding an **append-only, count-preserving**
+> event token log, delivered as text so it transfers across policies without adaptation.
+
+Every word in that sentence is doing work. Drop "discrete", "append-only", or "count-preserving"
+and it collapses into WeaveLA or KEMO.
+
+
+---
+
 ## 5. Experiments
 
 **E1 — does the memory string change behaviour at all? (week 1, before building anything)**
@@ -501,8 +575,9 @@ sparse-overlap test and is the same question in discrete form.
 similarity-merged token bank (the dedup straw-man, and the point of the paper), a VLM captioner
 (≈ MemER), and a GRU. Prediction: merging and captioning lose counts; token sequences don't.
 
-**E5 — extrapolation.** Counts beyond the training range. A GRU learned a counter; a token
-sequence *is* one.
+**E5 — extrapolation. THE central experiment (see §4d).** Counts beyond the training range, and
+beyond WeaveLA's reported N=3. A pooled latent must encode "how many" in its geometry; an
+append-only token sequence just gets longer. Match at N=3, win at N≥5.
 
 **E6 — zero-adaptation transfer.** Same memory string into ≥3 VLAs, inference only, no
 fine-tuning. Then few-shot: briefly tune each to attend to the string. Expect few-shot > zero-shot;
