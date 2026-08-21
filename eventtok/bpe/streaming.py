@@ -69,6 +69,22 @@ class EventLog:
     def __len__(self) -> int:
         return len(self.tokens)
 
+    def prefix_at(self, transition_idx: int) -> "EventLog":
+        """The log as it stood at ``transition_idx`` — events closed by then only.
+
+        **Use this to build policy training examples.** Conditioning on the
+        full-episode log while deploying on a partial one is future leakage: at
+        the first swing the memory would already say the robot swings three
+        times. Silent, and it inflates exactly the counting numbers this project
+        reports, so the prefix is not optional.
+        """
+        keep = [i for i, (_, end) in enumerate(self.spans) if end <= transition_idx]
+        return EventLog(
+            tokens=[self.tokens[i] for i in keep],
+            spans=[self.spans[i] for i in keep],
+            codes=[self.codes[i] for i in keep],
+        )
+
     def count(self, token: int) -> int:
         """How many times an event token occurs. The whole point of the design."""
         return self.tokens.count(token)

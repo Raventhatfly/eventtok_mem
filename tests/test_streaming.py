@@ -88,3 +88,35 @@ def test_spans_tile_the_stream_without_overlap() -> None:
     for (_, end), (start, _) in zip(spans, spans[1:]):
         assert end == start, "spans must be contiguous and non-overlapping"
     assert spans[-1][1] == 7
+
+
+def test_prefix_at_excludes_future_events() -> None:
+    """Policy training must see only events closed by the current step.
+
+    Conditioning on the full-episode log while deploying on a partial one is
+    future leakage, and it would inflate the counting results directly.
+    """
+    st = run([1, 1, 2, 2, 1, 1, 3, 3], min_span=2)
+    full = st.log
+    assert len(full.tokens) >= 3
+
+    # At the very start nothing has closed.
+    assert full.prefix_at(0).tokens == []
+
+    # Prefixes must be monotone and must agree with the full log's ordering.
+    seen: list[int] = []
+    for t in range(0, 9):
+        p = full.prefix_at(t)
+        assert p.tokens == full.tokens[: len(p.tokens)]
+        assert len(p.tokens) >= len(seen)
+        seen = p.tokens
+
+    # And by the end, the prefix is everything that closed before the last step.
+    assert full.prefix_at(10**6).tokens == full.tokens
+
+
+def test_prefix_never_leaks_a_later_count() -> None:
+    """A prefix taken during the first repetition must not already show three."""
+    st = run([7, 7, 9, 9, 7, 7, 9, 9, 7, 7, 9, 9], min_span=2)
+    early = st.log.prefix_at(3)
+    assert early.count(7) < st.log.count(7)
