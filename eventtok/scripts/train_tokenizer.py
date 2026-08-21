@@ -27,15 +27,17 @@ from ..models.tokenizer import EventTokenizer, losses
 def build(args, dataset: TransitionDataset) -> EventTokenizer:
     sample = dataset[0]
     return EventTokenizer(
+        action_dim=sample["actions"].shape[-1],
         d_feat=sample["feat_t"].shape[-1],
         n_vis_tokens=sample["feat_t"].shape[0],
-        action_dim=sample["actions"].shape[-1],
         k=args.k,
         d_model=args.d_model,
         n_registers=args.registers,
         n_layers=args.layers,
         fsq_levels=tuple(args.levels),
         causal_registers=not args.no_causal,
+        use_vision=args.use_vision,
+        far_head=args.far_horizon is not None,
     )
 
 
@@ -73,11 +75,16 @@ def main() -> None:
     ap.add_argument("--layers", type=int, default=3)
     ap.add_argument("--d-model", type=int, default=256)
     ap.add_argument("--no-causal", action="store_true")
+    ap.add_argument("--use-vision", action="store_true",
+                    help="add visual context to the encoder (off by default: it "
+                         "pulled codes toward trajectory phase, not motion type)")
     ap.add_argument("--epochs", type=int, default=4)
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--lr", type=float, default=3e-4)
-    ap.add_argument("--w-feat", type=float, default=1.0)
     ap.add_argument("--w-action", type=float, default=1.0)
+    ap.add_argument("--w-far", type=float, default=0.0)
+    ap.add_argument("--far-horizon", type=int, default=None,
+                    help="auxiliary target frame at t+far_horizon (must exceed k)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--stride", type=int, default=1)
     ap.add_argument("--limit-episodes", type=int, default=None)
@@ -93,7 +100,7 @@ def main() -> None:
 
     dataset = TransitionDataset(
         args.task, k=args.k, scale=args.scale, stride=args.stride,
-        episodes=episodes, index=index,
+        episodes=episodes, index=index, far_horizon=args.far_horizon,
     )
     device = torch.device(
         args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -124,7 +131,7 @@ def main() -> None:
     history = []
     for epoch in range(args.epochs):
         model.train()
-        agg = {"feat": 0.0, "action": 0.0, "total": 0.0, "residual_cos": 0.0}
+        agg = {"action": 0.0, "total": 0.0}
         n = 0
         last_tokens = last_digits = None
         t0 = time.time()
@@ -132,9 +139,13 @@ def main() -> None:
             feat_t = batch["feat_t"].to(device, non_blocking=True)
             feat_next = batch["feat_next"].to(device, non_blocking=True)
             actions = batch["actions"].to(device, non_blocking=True)
+            feat_far = (
+                batch["feat_far"].to(device, non_blocking=True)
+                if "feat_far" in batch else None
+            )
 
-            out = model(feat_t, feat_next, actions)
-            loss = losses(out, feat_t, feat_next, actions, args.w_feat, args.w_action)
+            out = model(actions, feat_t, feat_next, feat_far)
+            loss = losses(out, actions, feat_t, feat_far, args.w_action, args.w_far)
 
             opt.zero_grad(set_to_none=True)
             loss["total"].backward()
@@ -144,24 +155,26 @@ def main() -> None:
 
             for key in agg:
                 agg[key] += float(loss[key].detach())
+            if "far_cos" in loss:
+                agg["far_cos"] = agg.get("far_cos", 0.0) + float(loss["far_cos"])
             n += 1
             last_tokens, last_digits = out.tokens.detach(), out.digits.detach()
 
             if step % 50 == 0:
+                extra = (
+                    f" far_cos {float(loss['far_cos']):+.4f}"
+                    if "far_cos" in loss else ""
+                )
                 print(
                     f"  ep{epoch} step {step:5d}/{len(loader)} "
-                    f"feat {float(loss['feat']):.4f} action {float(loss['action']):.4f} "
-                    f"rcos {float(loss['residual_cos']):+.4f}",
+                    f"action {float(loss['action']):.4f}{extra}",
                     flush=True,
                 )
 
         stats = code_stats(model, last_tokens, last_digits)
         record = {
             "epoch": epoch,
-            "feat": agg["feat"] / n,
-            "action": agg["action"] / n,
-            "total": agg["total"] / n,
-            "residual_cos": agg["residual_cos"] / n,
+            **{k2: v / n for k2, v in agg.items()},
             "secs": time.time() - t0,
             **stats,
         }
@@ -171,8 +184,8 @@ def main() -> None:
             for c in stats["channels"]
         )
         print(
-            f"[epoch {epoch}] feat {record['feat']:.4f} action {record['action']:.4f} "
-            f"rcos {record['residual_cos']:+.4f} "
+            f"[epoch {epoch}] action {record['action']:.4f} "
+            f"{'far_cos %+.4f ' % record['far_cos'] if 'far_cos' in record else ''}"
             f"| codes {stats['codes_used']}/{stats['codebook']} "
             f"({stats['usage']:.1%}) | channels {chans} | {record['secs']:.0f}s",
             flush=True,

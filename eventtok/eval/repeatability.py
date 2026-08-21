@@ -142,3 +142,135 @@ def report(
         "exact_frac": exact / n,
         "rows": rows,
     }
+
+
+@dataclass
+class BoundaryScore:
+    tp: int
+    fp: int
+    fn: int
+    tolerance: int
+
+    @property
+    def precision(self) -> float:
+        return self.tp / max(self.tp + self.fp, 1)
+
+    @property
+    def recall(self) -> float:
+        return self.tp / max(self.tp + self.fn, 1)
+
+    @property
+    def f1(self) -> float:
+        p, r = self.precision, self.recall
+        return 2 * p * r / max(p + r, 1e-9)
+
+
+def boundary_score(
+    codes: Sequence[int], ep: Episode, meta: TaskMeta, tolerance: int = 8
+) -> BoundaryScore:
+    """Do code changes coincide with annotated event boundaries?
+
+    **This is the metric that says whether anything is being segmented**, and it is
+    not implied by within-event stability: a code constant over the whole episode
+    scores 0% change rate — perfect by that measure — while segmenting nothing.
+
+    Measured on action clusters over 40 SwingXtimes episodes, recall is 0.97-1.00
+    but precision is 0.13-0.24. So the stream is a high-recall *candidate* set that
+    over-segments 4-8x, not a segmentation. Merging candidates into events is the
+    BPE stage's job; a code change is not an event boundary.
+    """
+    segments = sg.segments_from_track(meta.episode_labels(ep.epis_idx), ep.exec_start)
+    true_b = {s.start - ep.exec_start for s in segments if s.start > ep.exec_start}
+    pred_b = {i for i in range(1, len(codes)) if codes[i] != codes[i - 1]}
+
+    matched: set[int] = set()
+    tp = fn = 0
+    for t in sorted(true_b):
+        hits = [p for p in pred_b if abs(p - t) <= tolerance and p not in matched]
+        if hits:
+            matched.add(min(hits, key=lambda p: abs(p - t)))
+            tp += 1
+        else:
+            fn += 1
+    return BoundaryScore(tp, len(pred_b) - len(matched), fn, tolerance)
+
+
+def label_mutual_information(
+    codes: Sequence[int], ep: Episode, meta: TaskMeta
+) -> tuple[list[int], list[str]]:
+    """Paired (code, canonical event label) samples, for MI over a whole task.
+
+    Labels are canonicalised so repetitions share one label — otherwise "for the
+    second time" reads as a different event and a correctly working tokenizer
+    scores as a failure.
+    """
+    segments = sg.segments_from_track(meta.episode_labels(ep.epis_idx), ep.exec_start)
+    out_codes: list[int] = []
+    out_labels: list[str] = []
+    for s in segments:
+        lo = max(s.start - ep.exec_start, 0)
+        hi = min(s.end - ep.exec_start, len(codes))
+        span = codes[lo:hi]
+        out_codes.extend(int(c) for c in span)
+        out_labels.extend([sg.canonical_label(s.label)] * len(span))
+    return out_codes, out_labels
+
+
+def _entropy(values: Sequence) -> float:
+    import math
+
+    counts = Counter(values)
+    n = sum(counts.values()) or 1
+    return -sum((c / n) * math.log(c / n) for c in counts.values() if c)
+
+
+def mutual_information(a: Sequence, b: Sequence) -> float:
+    import math
+
+    n = len(a) or 1
+    joint = Counter(zip(a, b))
+    ca, cb = Counter(a), Counter(b)
+    total = 0.0
+    for (va, vb), c in joint.items():
+        p = c / n
+        total += p * math.log(p / ((ca[va] / n) * (cb[vb] / n)))
+    return total
+
+
+def full_report(
+    streams: dict[int, Sequence[int]],
+    episodes: dict[int, Episode],
+    meta: TaskMeta,
+    tolerance: int = 8,
+) -> dict:
+    """Everything at once: stability, boundary alignment, label MI, n-gram count."""
+    base = report(streams, episodes, meta)
+
+    tp = fp = fn = 0
+    all_codes: list[int] = []
+    all_labels: list[str] = []
+    for epis_idx, codes in streams.items():
+        ep = episodes[epis_idx]
+        bs = boundary_score(codes, ep, meta, tolerance)
+        tp, fp, fn = tp + bs.tp, fp + bs.fp, fn + bs.fn
+        c, l = label_mutual_information(codes, ep, meta)
+        all_codes.extend(c)
+        all_labels.extend(l)
+
+    overall = BoundaryScore(tp, fp, fn, tolerance)
+    mi = mutual_information(all_codes, all_labels)
+    h_label = _entropy(all_labels)
+    base.update(
+        {
+            "boundary_precision": overall.precision,
+            "boundary_recall": overall.recall,
+            "boundary_f1": overall.f1,
+            "boundary_tp": tp,
+            "boundary_fp": fp,
+            "boundary_fn": fn,
+            "label_mi": mi,
+            "label_entropy": h_label,
+            "label_mi_frac": mi / max(h_label, 1e-9),
+        }
+    )
+    return base

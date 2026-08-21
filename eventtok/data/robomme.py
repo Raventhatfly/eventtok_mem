@@ -58,12 +58,15 @@ class TransitionDataset(Dataset):
         index: RoboMMEIndex | None = None,
         delta_actions: bool = True,
         normalize_actions: bool = True,
+        far_horizon: int | None = None,
     ) -> None:
         self.task = task
         self.k = k
         self.scale = scale
         self.delta_actions = delta_actions
         self.normalize_actions = normalize_actions
+        # Optional further-future frame, for a non-leaky auxiliary target.
+        self.far_horizon = far_horizon
 
         self.index = index or RoboMMEIndex()
         self.meta = TaskMeta(task)
@@ -75,7 +78,8 @@ class TransitionDataset(Dataset):
             lo, hi = self.meta.rows(ep.epis_idx)
             # Need feat at t and t+k, so t+k must be a real frame; and the action
             # chunk must exist, so t must be an execution frame.
-            last = min(ep.n_frames - 1 - k, ep.exec_start + (hi - lo) - 1)
+            reach = k if far_horizon is None else max(k, far_horizon)
+            last = min(ep.n_frames - 1 - reach, ep.exec_start + (hi - lo) - 1)
             for step in range(ep.exec_start, last + 1, stride):
                 self.refs.append(
                     TransitionRef(ep.epis_idx, step, self.meta.row_of(ep, step))
@@ -98,13 +102,17 @@ class TransitionDataset(Dataset):
         if self.normalize_actions:
             actions = actions / self.meta.action_scale
 
-        return {
+        item = {
             "feat_t": torch.from_numpy(feat_t),
             "feat_next": torch.from_numpy(feat_next),
             "actions": torch.from_numpy(actions),
             "epis_idx": torch.tensor(ref.epis_idx, dtype=torch.long),
             "step": torch.tensor(ref.step, dtype=torch.long),
         }
+        if self.far_horizon is not None:
+            far = np.asarray(feats[ref.step + self.far_horizon], dtype=np.float32)
+            item["feat_far"] = torch.from_numpy(far)
+        return item
 
     # ------------------------------------------------------------------ helpers
 

@@ -25,15 +25,17 @@ def load_model(ckpt_path: str, device: torch.device) -> tuple[EventTokenizer, di
     blob = torch.load(ckpt_path, map_location=device, weights_only=False)
     a = blob["args"]
     model = EventTokenizer(
-        d_feat=2048,
-        n_vis_tokens=4 if a["scale"] == "2x2" else (16 if a["scale"] == "4x4" else 64),
         action_dim=8,
         k=a["k"],
+        d_feat=2048,
+        n_vis_tokens=4 if a["scale"] == "2x2" else (16 if a["scale"] == "4x4" else 64),
         d_model=a["d_model"],
         n_registers=a["registers"],
         n_layers=a["layers"],
         fsq_levels=tuple(a["levels"]),
         causal_registers=not a["no_causal"],
+        use_vision=a.get("use_vision", False),
+        far_head=a.get("far_horizon") is not None,
     ).to(device)
     model.load_state_dict(blob["state_dict"])
     model.eval()
@@ -58,10 +60,10 @@ def stream_for_episode(
         feat_t = torch.stack([i["feat_t"] for i in items]).to(device)
         feat_next = torch.stack([i["feat_next"] for i in items]).to(device)
         actions = torch.stack([i["actions"] for i in items]).to(device)
-        out = model(feat_t, feat_next, actions)
-        # Register 0 is the coarse token under the ordering; it is the one that
-        # should repeat across instances of the same event, so it is what the
-        # stream is built from. Later registers carry instance detail.
+        out = model(actions, feat_t, feat_next)
+        # Register 0 is the coarse token under the causal ordering, so it is the
+        # one expected to repeat across instances of the same event. Later
+        # registers carry instance detail and are kept only in `digits`.
         codes.extend(out.tokens[:, 0].cpu().tolist())
         digits.append(out.digits.cpu().numpy())
         steps.extend(int(i["step"]) for i in items)

@@ -239,6 +239,60 @@ Once, offline, per code. Each token gets the label that is modal across its occu
 
 ---
 
+## 4e. What the first implementation measured (2026-08-21)
+
+Four corrections came out of building it. Each was found by a measurement, and
+each invalidated a design choice taken from the literature without checking it
+against this data.
+
+**1. The event lives in the action, not in vision.** Feeding vision into the
+encoder pulled codes toward *trajectory phase* rather than *motion type*. Removing
+vision from the input entirely and clustering action chunks fixed it. Vision
+belongs on the *target* side (outcome: "did the grasp succeed"), never the input.
+
+**2. Plain k-means beats the learned tokenizer.** On 40 SwingXtimes episodes:
+
+| | within-event change | boundary P | label MI | n-gram == N |
+|---|---|---|---|---|
+| k-means K=32 | **11.6 %** | **0.127** | **59.5 %** | **29/40** |
+| neural, 4 epochs | 21.4 % | 0.061 | 37.2 % | 0/20 |
+
+`models/kmeans.py` is therefore a first-class path, not a diagnostic. **If a
+learned tokenizer cannot beat Lloyd's algorithm, the learning is not earning its
+place.** Keep it in every comparison.
+
+**3. The code stream is not a segmentation.** Boundary recall is 0.87–1.00 but
+precision is 0.06–0.13, so it over-segments 4–8×. It is a *high-recall candidate
+set*. Within-event stability cannot detect this — a code constant over the whole
+episode scores a perfect 0 % change rate while segmenting nothing — which is why
+`eval/repeatability.py` reports boundary precision and label MI alongside it.
+**Do not call a code change an event boundary.**
+
+**4. BPE must run over run *symbols*, not within runs.** Splitting at code changes
+makes every span a constant stretch, so every adjacent pair inside it is a
+self-pair, which the no-self-merge guard forbids — 0 merges, and an "event log"
+that was just the raw stream at 429 tokens per episode. Correct structure:
+
+```
+raw     A A A B B C C C A A     transitions
+runs    A B C A                 candidate units, over-segmented
+BPE     [AB] C A                the selection stage
+```
+
+Guard 1 still protects counts; guard 2 becomes "no merges across episodes", which
+is automatic. After the fix: 429 transitions → 48 runs → **16.7 event tokens**, a
+26× compression, with the most frequent token's count matching N in 19/40 episodes.
+
+### Where it stands
+
+The pipeline runs end to end and every stage is measured. Count accuracy at 48 %
+is well above chance and not yet a result. The over/under split (8 over, 13 under
+at `min_frequency=15`) shows a genuine tuning optimum between under-merging and
+over-merging — the first thing to sweep on GPU.
+
+
+---
+
 ## 5. Experiments
 
 **E1 — does a memory string change behaviour at all? (week 1, before building)**
