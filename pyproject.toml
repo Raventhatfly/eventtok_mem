@@ -1,0 +1,18 @@
+[project]
+name = "eventtok"
+version = "0.1.0"
+description = "Event tokens as robot policy memory"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.22.4,<2.0.0",   # robomme env pins <2; jax/orbax there expect 1.x
+    "torch>=2.7",
+    "ml_dtypes==0.4.1",       # reads the bfloat16 feature npys
+    "tokenizers>=0.20",       # BPE over code streams
+    "matplotlib>=3.7",        # timeline figure
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
