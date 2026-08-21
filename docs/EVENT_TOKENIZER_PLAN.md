@@ -137,27 +137,28 @@ Five clean events with text labels, for free, on every episode of all 16 tasks.
 - RoboMME ships reference implementations for both **Diffusion Policy** (lerobot format) and
   **MemoryVLA** (TFDS) on this exact data — the policy baseline and the dedup baseline both exist.
 
-### Our own pipeline is the straw-man — and that is an asset
+### A negative result we already have
 
 `/n/netscratch/ydu_lab/Lab/wfy/ckpts/robomme_policy_ckpt/` holds
-`evaluation_moviechat_qformer_context_full` and `_requeue`, plus `runs/`. So a memory-augmented
-policy using **MovieChat QFormer context** has already been trained and evaluated on RoboMME here.
+`evaluation_moviechat_qformer_context_full` and `_requeue`. **MovieChat QFormer context was run
+here as a baseline and its rollouts were poor.** It is not our method and we have never adopted
+token merging.
 
-MovieChat *is* a token-merging memory — it consolidates similar visual tokens to fit long video
-into a fixed budget. That is precisely the mechanism this paper argues destroys count information.
+That is useful, and it is motivation rather than self-critique: an off-the-shelf memory built on
+consolidating similar visual tokens performs badly on this benchmark, in our own hands.
 
-Two consequences:
-1. **The dedup baseline is not hypothetical.** The pipeline exists, the eval harness works, and
-   numbers may already be sitting in those run directories. Check them before rebuilding anything.
-2. **The narrative writes itself, and it is credible because it is self-critical:** we built a
-   token-merging memory for this benchmark; here is the failure mode merging has on counting
-   tasks; here is the replacement. Critiquing one's own prior approach reads far better than
-   critiquing someone else's.
+**But do not yet claim merging is the cause.** A bad rollout has many possible explanations —
+tuning, the QFormer bottleneck, the training recipe — and attributing it to consolidation without
+evidence is exactly the kind of claim a reviewer will take apart. The cheap test is the **per-task
+breakdown** from those existing runs:
 
-First thing to do in week 1 alongside E1: pull the per-task breakdown from those existing runs and
-check whether `PickXtimes` / `SwingXtimes` / `BinFill` underperform the non-counting tasks. **If
-the counting tasks are already the weak ones, that is the paper's opening figure and it costs
-nothing to produce.**
+- If `PickXtimes` / `SwingXtimes` / `BinFill` fail *worse than* the non-counting tasks, that is
+  causal evidence for the merging argument and it is the paper's opening figure.
+- If it fails roughly uniformly across all 16 tasks, MovieChat is simply ill-suited here and the
+  merging argument needs a controlled experiment instead: same policy, same data, memory with and
+  without a dedup step.
+
+Pull that breakdown before writing any motivation text.
 
 ### Positioning caution
 
