@@ -370,6 +370,118 @@ no reliance on the monotonicity assumption ElasticTok itself admits is false.
 
 ---
 
+## 4c. The pipeline — settled (2026-08-20)
+
+### BPE over a code stream, not run-length encoding
+
+The text-tokenizer analogy is not a metaphor; it is the implementation. **PRISE** (Zheng, Cheng,
+Daumé III, Huang, Kolobov, ICML 2024, [arXiv:2402.10450](https://arxiv.org/abs/2402.10450)) is the
+only published method emitting **variable-duration discrete tokens from LIBERO demos**, and it does
+it in two stages:
+
+1. per-timestep state-conditioned VQ with a **tiny alphabet (C = 10)**
+2. **BPE over the resulting code stream** — vocab 200, `min_frequency 10`, `max_token_length 20`
+
+Each BPE token is a tuple `⟨f_ξ, L_ξ⟩` — a skill with its own horizon. Variable length is purely
+frequency-driven, exactly as in text.
+
+BPE dominates the run-length-encoding idea: RLE only merges *identical adjacent* codes, whereas BPE
+learns frequent multi-code *patterns*, so a "scoop" made of codes `A B C` becomes one token. And it
+preserves counts for the same reason RLE does — merges are over adjacent pairs within an event,
+never across separated occurrences.
+
+**The reusable artifact:** PRISE's `tokenizer_api.py` is a **standalone ~110-line wrapper** around
+HuggingFace `tokenizers` with no dependency on the rest of the repo. It maps integer code IDs onto
+a ByteLevel alphabet, trains BPE/WordPiece/Unigram with `vocab_size` / `min_frequency` /
+`max_token_length`, and exposes `encode(list_of_int_lists)` / `decode`. **Drop it on any per-step
+code stream.** Stage II costs ~10 min on one A100.
+
+Skip PRISE's Stage I — it needs 4× A100 40 GB + 400 GB RAM as published.
+
+### Where the per-step codes come from
+
+**QueST** ([arXiv:2407.15840](https://arxiv.org/abs/2407.15840), `github.com/pairlab/QueST`, MIT,
+★116). Verified from source: causal strided conv (`strides [2,2,1]`, `kernels [5,3,3]`, F=4) +
+2-layer transformer encoder (d=256) → **8 tokens per 32-step chunk**, FSQ `[8,5,5,5]` = 1000,
+4-layer transformer decoder, L1 reconstruction only, no commitment loss, no EMA.
+
+Two facts that matter:
+- `config/task/libero_base.yaml` already declares **exactly our keys**: `agentview_rgb`,
+  `eye_in_hand_rgb`, `joint_states`, `gripper_states`, `ee_pos`.
+- `SkillVAE.encode(act, obs_emb=None)` **already has the visual hook**, but
+  `load_obs_for_pretrain: false` — the released tokenizer is action-only. **Wiring `obs_emb`
+  through `compute_autoencoder_loss` is the one piece of real engineering**, and it is precisely
+  the visual+action tokenizer we want.
+
+If codebook collapse bites, **STAR** (ICML 2025 spotlight, `iLearn-Lab/ICML25-STAR`) is the same
+codebase with rotation-augmented residual quantization — 93.6 vs QueST 81.5 on LIBERO-90. Note the
+paper's own `JiuTian-VL/STAR` link is dead.
+
+### Boundary detectors that run today (for validation, not for the main path)
+
+- **UVD** (Zhang et al., ICRA 2024, [arXiv:2310.08581](https://arxiv.org/abs/2310.08581),
+  `github.com/zcczhang/UVD`) — **training-free**. Walk backward in a pretrained embedding space;
+  distance-to-goal decreases within a subtask and jumps at boundaries. One-line API:
+  `uvd.get_uvd_subgoals(video, preprocessor_name="vip")` on an `(L,H,W,3)` array. **Runs on
+  `agentview_rgb` immediately.**
+- **PerAct keyframe heuristic** — ~20 lines, the de-facto baseline:
+  ```python
+  small_delta = np.allclose(obs.joint_velocities, 0, atol=0.1)
+  stopped = (stopped_buffer <= 0 and small_delta and not next_is_not_final
+             and gripper_state_no_change)
+  if i != 0 and (obs.gripper_open != prev_gripper_open or last or stopped):
+      episode_keypoints.append(i)
+  ```
+  with `stopped_buffer = 4 if stopped else stopped_buffer - 1`. Needs only `joint_states` +
+  `gripper_states`.
+- **SBD** (Deng et al., **ICCV 2025**, [arXiv:2503.10684](https://arxiv.org/abs/2503.10684)) — the
+  prediction-error boundary detector, explicitly motivated by human event-segmentation theory. Run
+  an unconditional action predictor; boundary where per-step NLL spikes:
+  `if loss − mean(loss_history) > GAP` with **GAP = 18**, running mean reset after each boundary,
+  segment lengths pruned to [15, 200]. This is the published version of our novelty gate.
+
+### The nearest neighbour — differentiate from this explicitly
+
+**EventVLA — "Event-Driven Visual Evidence Memory for Long-Horizon VLA Policies"**
+([arXiv:2606.20092](https://arxiv.org/abs/2606.20092), 2026). An MLP head on the VLA's hidden state
+predicts future-keyframe probability over an H=50 horizon with raised-cosine soft labels; when
+`p̂ ≥ 0.55` the **raw image** is committed to a FIFO event buffer (`N_max = 5`) after 1-D NMS, and
+memory re-enters as `concat([A_t, E_{t−1}, o_t])`. **+40 % over SOTA memory-augmented VLAs.** No
+code released.
+
+They buffer **raw images**; we buffer **discrete tokens**. That single swap is the contribution,
+and it is what gives counting, nameability, a bounded vocabulary, and zero-adaptation text
+transfer. State the comparison in the intro rather than letting a reviewer find it.
+
+### Two data gotchas nobody in this literature handles
+
+1. **Absolute vs. relative state.** `ee_states` are absolute world-frame poses, so the *same* skill
+   toward two object placements looks completely different. Transform to object-centric or
+   start-relative frames before tokenizing, or codes will fragment by location.
+2. **Dimensionality vs. data.** ~5–10k timesteps per task. Reduce to `[ee_pos(3), ee_ori(3),
+   gripper(1)]` = 7 dims rather than the full 23-D state.
+
+### Resulting build
+
+```
+features (precomputed SigLIP)  +  actions
+        │
+   QueST SkillVAE with obs_emb wired in     ← the one real engineering task
+        │
+   FSQ [8,5,5,5] → per-chunk code indices
+        │
+   PRISE tokenizer_api.py: BPE, vocab ~200  ← standalone, ~10 min
+        │
+   variable-length event tokens
+        │
+   name each token by its modal `simple_subgoal`
+```
+
+Validate boundaries against `simple_subgoal` transitions, UVD, and the PerAct heuristic.
+
+
+---
+
 ## 5. Experiments
 
 **E1 — does the memory string change behaviour at all? (week 1, before building anything)**
