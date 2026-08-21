@@ -266,6 +266,109 @@ and this is precisely what a continuous embedding cannot offer.
 
 ---
 
+## 4b. Tokenizer design — settled by the quantizer sweep (2026-08-20)
+
+### The finding that decides the objective
+
+**Reconstruction-trained codes are not semantic.** FSQ's own Appendix A.3, on both quantizers:
+
+> *"We found no evidence that a particular code represents a fixed visual concept in either
+> quantizer… individual codes do not learn very abstract concepts. Instead it is the combination
+> of codes decoder weights which determine the final RGB image."*
+
+**BEiT-v2 Table 4** shows the tension is not incidental but a direct trade:
+
+| VQ-KD decoder depth | recon loss | codebook usage | IN-1k linear probe |
+|---|---|---|---|
+| 1 layer | 0.164 | **100 %** | **78.5** |
+| 3 layers | 0.145 | 95 % | 77.9 |
+| 6 layers | **0.136** | 77 % | **63.0** |
+
+Better reconstruction → lower usage → worse semantics.
+
+And **LOVE** (Jiang, Liu, Eysenbach, Kolter, Finn, NeurIPS 2022,
+[arXiv:2212.04590](https://arxiv.org/abs/2212.04590)) makes the same point about *boundaries*:
+LOVE vs VTA reach statistically indistinguishable ELBO (2838±19 vs 2868±43) while boundary F1
+differs **0.91 vs 0.82**. **The likelihood term does not identify the boundaries; the compression
+term does.** Their objective is literally (number of segments) × (bits per segment code):
+
+```
+L_CL(θ) = n_s · H_{p_z*}[z]      minimised subject to   L_ELBO ≤ C     (dual gradient descent on λ)
+```
+
+Note the sign: LOVE **minimises** marginal code entropy. The VQ/MAGVIT-v2 entropy penalty
+`E[H(q)] − H(E[q])` **maximises** it (it is `−I(z;token)`; the second term is a rate *maximiser*
+that forces uniform code usage). For an event vocabulary over repetitive data with a naturally
+skewed event prior, forcing uniformity is actively wrong — it splits the most frequent motion
+across many codes. Keep the per-sample confidence term; temper or invert the uniformity term.
+
+### Consequences — five concrete design decisions
+
+1. **Never reconstruct pixels.** Decoder target = frozen **DINOv2 patch features** at `t+k`
+   (UniVLA) and/or the **action chunk** (QueST). UniVLA's own ablation: task-centric feature
+   target **88.7** vs Genie-style all-visual-change **82.3** vs task-irrelevant-only **56.5**.
+2. **Quantize the transition, not the frame.** Encode `(features_t, features_{t+k}, a_{t:t+k})`
+   and let the code carry only what *changed*. Give the decoder frame `t` for free. This is why
+   Genie's 8 codes come out as left/right/jump/no-op.
+3. **Small vocabulary, few tokens.** Every latent-action model with good same-event→same-code
+   behaviour uses a *tiny* book: Genie **8**, LAPA **8⁴**, IGOR **32**, UniVLA **16×2**,
+   Moto **128**, villa-X **32**. Not 1000 flat. Genie is explicit: *"We limit the vocabulary size…
+   to permit human playability and further enforce controllability (we use |A|=8)."*
+   Our nameability requirement points the same way.
+4. **Add explicit nuisance suppression, or expect camera-motion codes.** LAPA is the documented
+   failure — codes meaning *"slight downward camera movement."* Three verified mitigations:
+   IGOR's **mismatched random crops** between encoder input and decoder target; UniVLA's frozen
+   task-irrelevant codebook + language conditioning; villa-X's **proprioceptive** forward model
+   for motions "subtle in pixel changes but critical for control" (rotation, gripper).
+5. **The contrastive-with-subgoal-positives objective (§4.2) is the right call** and is now
+   supported by five independent sources rather than a hunch. VQ-KD-style **cosine distillation
+   over DINOv2 feature deltas** is the natural alternative, and I found no paper doing exactly it.
+
+### Quantizer: FSQ, `[8,8,8] = 512` or `[8,5,5,5] = 1000`
+
+Direct domain precedent: **QueST** ([arXiv:2407.15840](https://arxiv.org/abs/2407.15840), NeurIPS
+2024) uses FSQ `[8,5,5,5]` over 32-step action chunks and beats VQ **89.8 vs 81.2** on LIBERO-90
+multitask, **68.8 vs 62.5** few-shot. FlexLAM independently picked the same levels for latent
+actions.
+
+Caveat worth knowing: FSQ's own paper reports *"for low codebook sizes… VQ marginally outperforms
+FSQ"*, with the crossover at **|C| = 2¹⁰**, i.e. right at our target. Three counter-data-points say
+take FSQ anyway — QueST above; BSQ Table 5 where VQ at 1024 codes sat at **57.5 % usage / rFID
+7.05**; and the rotation-trick paper where a K=1024 VQGAN fell to **27 % usage** on a low-diversity
+dataset. FSQ's real value here is operational: no commitment loss, no EMA, no k-means init, no
+dead-code replacement, ~100 % usage by construction. The research risk belongs in the objective,
+not in quantizer babysitting.
+
+Keep `L_i ≥ 5` (FSQ's own heuristic — below that "subpar performance"). **BSQ** at L=9–10 is the
+alternative if we want an explicit rate knob: it is the only quantizer here with a tunable γ on the
+marginal-entropy term, which is exactly the dial between "use every code" and "let frequent events
+collide" — and collision is what counting needs.
+
+### Adaptive length
+
+Nested dropout over event tokens with a **power-of-2 keep-length schedule** (FlexTok's ablated
+choice). Avoid the geometric schedule without Rippel's unit-sweeping fix — high-index units starve
+(p ≈ 3e-5 for the 100th unit at ρ=0.9). For a stopping rule, prefer an **InfoTok-style one-pass
+ELBO router** over ElasticTok's binary search: same effect, one decoder pass instead of log₂N, and
+no reliance on the monotonicity assumption ElasticTok itself admits is false.
+
+### Instrumentation — three pathologies
+
+1. **FSQ dimension collapse.** Aggregate codebook usage is the wrong instrument for FSQ. Log the
+   **per-channel histogram over each channel's L_i levels**: with d=3–4, one channel collapsing to
+   1–2 levels silently costs a factor of 5–8 of effective vocabulary while total usage still looks
+   healthy.
+2. **Nuisance capture.** Measure `P(same code | same subgoal)` vs `P(same code | different
+   subgoal)` — this is E3, and the subgoal labels give it for free. Also mutual information
+   between code and episode id / camera / lighting / object instance, and a **repeat test**: edit
+   distance between code sequences for N repetitions of the same demonstration.
+3. **Uniformity fighting the event prior.** Plot the code histogram against the empirical
+   subgoal-frequency histogram. Perfect uniformity over 512 codes when three motions are 80 % of
+   the data is a failure, not a success.
+
+
+---
+
 ## 5. Experiments
 
 **E1 — does the memory string change behaviour at all? (week 1, before building anything)**
