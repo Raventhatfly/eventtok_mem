@@ -167,6 +167,41 @@ HuggingFace `tokenizers` with no dependency on the rest of the repo. Takes any l
 exposes `vocab_size` / `min_frequency` / `max_token_length`. ~10 min on one A100. **Skip PRISE's
 Stage I** — as published it wants 4× A100 40 GB + 400 GB RAM.
 
+### A second trap: BPE is not streaming-stable
+
+Text BPE is applied to a *complete* sequence. A robot's codes arrive one at a
+time, and applying BPE to the growing prefix is not stable — with a merge
+`(A,B) -> X`, the stream `A` tokenizes to `[A]` and one step later `A B`
+tokenizes to `[X]`. The earlier token was not appended to, it was **replaced**.
+A log built that way rewrites its own history and any count read from it can
+change retroactively, which defeats the entire design.
+
+**The fix is where BPE runs, not whether.** Confine merges to a single *completed*
+event span:
+
+```
+codes:  A A A | B B | C C C C | B B ...
+              ^ boundary -> span [A A A] is final -> BPE it -> append, immutable
+```
+
+Nothing after a boundary may merge into what precedes it, so the log is
+append-only **at event granularity**. Latency is one transition. The two guards
+above make this sound: no self-merges means repetitions can never collapse, and
+boundaries as hard barriers during vocabulary training means no learned merge
+ever spans one.
+
+Implemented in `eventtok/bpe/streaming.py`; the append-only property is asserted
+directly in `tests/test_streaming.py`.
+
+**Consequence for boundary detectors: they must be online.** "The code changed"
+and the PerAct gripper/velocity heuristic both are. **UVD is not** — it walks
+backward from the final frame, so it is an offline evaluation tool for E3 and must
+never appear in a test-time path.
+
+The in-progress event is deliberately absent from the log. That is the right
+division of labour: the log carries the past, and the policy already observes the
+present directly.
+
 ### The trap that would kill the whole claim
 
 BPE merges frequent adjacent pairs. `swing` follows `swing` constantly — that *is* the task — so

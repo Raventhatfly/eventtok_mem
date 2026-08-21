@@ -134,6 +134,23 @@ class TaskMeta:
         lo, hi = self._rows[epis_idx]
         return self.actions[lo:hi]
 
+    @property
+    def action_scale(self) -> np.ndarray:
+        """Per-dimension std of the delta action chunks.
+
+        The gripper dimension has std ~0.95 while the seven pose dimensions sit
+        at 0.05-0.20, so an unnormalised L1 is effectively a gripper predictor
+        and the pose information is invisible to the loss. Computed once over a
+        subsample and cached on the instance.
+        """
+        if getattr(self, "_action_scale", None) is None:
+            rows = np.linspace(0, len(self.actions) - 1, num=min(4096, len(self.actions)))
+            rows = np.unique(rows.astype(np.int64))
+            chunks = np.stack([self.delta_actions(int(r)) for r in rows])
+            scale = chunks.reshape(-1, chunks.shape[-1]).std(axis=0)
+            self._action_scale = np.maximum(scale, 1e-3).astype(np.float32)
+        return self._action_scale
+
     def delta_actions(self, row: int) -> np.ndarray:
         """Action chunk with the current state removed from the first 7 dims.
 

@@ -57,11 +57,13 @@ class TransitionDataset(Dataset):
         episodes: list[Episode] | None = None,
         index: RoboMMEIndex | None = None,
         delta_actions: bool = True,
+        normalize_actions: bool = True,
     ) -> None:
         self.task = task
         self.k = k
         self.scale = scale
         self.delta_actions = delta_actions
+        self.normalize_actions = normalize_actions
 
         self.index = index or RoboMMEIndex()
         self.meta = TaskMeta(task)
@@ -93,6 +95,8 @@ class TransitionDataset(Dataset):
         else:
             actions = self.meta.actions[ref.row]
         actions = np.asarray(actions, dtype=np.float32)[: self.k]
+        if self.normalize_actions:
+            actions = actions / self.meta.action_scale
 
         return {
             "feat_t": torch.from_numpy(feat_t),
