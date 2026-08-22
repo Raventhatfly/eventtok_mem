@@ -68,8 +68,24 @@ while kill -0 "${CHILD}" 2>/dev/null; do wait "${CHILD}"; STATUS=$?; done
 echo "[sbatch] encoder exited ${STATUS}"
 
 if [[ "${STATUS}" -eq "${REQUEUE_EXIT_CODE}" ]]; then
-  echo "[sbatch] clean episode boundary; requeueing ${SLURM_JOB_ID:-}"
-  if [[ -n "${SLURM_JOB_ID:-}" ]]; then scontrol requeue "${SLURM_JOB_ID}"; fi
+  # scancel reaches the job the same way preemption does -- SIGTERM, the trap, a
+  # clean stop at a checkpoint boundary, exit 85 -- so requeueing unconditionally
+  # here resurrects jobs the user deliberately killed. Observed: a cancelled job
+  # came straight back as PENDING and started redoing the work. Ask slurm what
+  # actually happened before putting the job back in the queue.
+  JOB_STATE=$(scontrol show job "${SLURM_JOB_ID:-0}" 2>/dev/null \
+    | tr ' ' '\n' | grep -m1 '^JobState=' | cut -d= -f2)
+  echo "[sbatch] stopped at a checkpoint boundary; JobState=${JOB_STATE:-unknown}"
+  case "${JOB_STATE}" in
+    CANCELLED|DEADLINE|TIMEOUT)
+      echo "[sbatch] ${JOB_STATE}, not requeueing"
+      exit 0
+      ;;
+  esac
+  if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    echo "[sbatch] requeueing ${SLURM_JOB_ID}"
+    scontrol requeue "${SLURM_JOB_ID}"
+  fi
   exit 0
 fi
 if [[ "${STATUS}" -ne 0 ]]; then exit "${STATUS}"; fi

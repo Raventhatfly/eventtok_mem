@@ -93,8 +93,24 @@ done
 echo "[sbatch] trainer exited ${STATUS}"
 
 if [[ "${STATUS}" -eq "${REQUEUE_EXIT_CODE}" ]]; then
-  echo "[sbatch] clean checkpoint boundary; requeueing ${SLURM_JOB_ID:-}"
-  if [[ -n "${SLURM_JOB_ID:-}" ]]; then scontrol requeue "${SLURM_JOB_ID}"; fi
+  # scancel reaches the job the same way preemption does -- SIGTERM, the trap, a
+  # clean stop at a checkpoint boundary, exit 85 -- so requeueing unconditionally
+  # here resurrects jobs the user deliberately killed. Observed: a cancelled job
+  # came straight back as PENDING and started redoing the work. Ask slurm what
+  # actually happened before putting the job back in the queue.
+  JOB_STATE=$(scontrol show job "${SLURM_JOB_ID:-0}" 2>/dev/null \
+    | tr ' ' '\n' | grep -m1 '^JobState=' | cut -d= -f2)
+  echo "[sbatch] stopped at a checkpoint boundary; JobState=${JOB_STATE:-unknown}"
+  case "${JOB_STATE}" in
+    CANCELLED|DEADLINE|TIMEOUT)
+      echo "[sbatch] ${JOB_STATE}, not requeueing"
+      exit 0
+      ;;
+  esac
+  if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    echo "[sbatch] requeueing ${SLURM_JOB_ID}"
+    scontrol requeue "${SLURM_JOB_ID}"
+  fi
   exit 0
 fi
 
@@ -105,7 +121,7 @@ fi
 
 # Training finished. Build the event logs from the final checkpoint, and the
 # k-means baseline alongside it: if the learned tokenizer cannot beat Lloyd's
-# algorithm, the learning is not earning its place.
+# algorithm, a learned tokenizer that loses to it is not worth its complexity.
 echo "[sbatch] building event logs"
 "${PY}" -m eventtok.scripts.build_events --ckpt "${CKPT}" --task "${TASK}" || true
 "${PY}" -m eventtok.scripts.build_events --kmeans 32 --task "${TASK}" || true
