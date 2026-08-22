@@ -90,6 +90,13 @@ def main() -> int:
     print(f"jax devices: {jax.devices()}", flush=True)
     tokenizer = SigLipTokenizer(inference_batch_size=args.batch)
     target = _N_TOKENS[args.scale]
+
+    # jit, and feed a *fixed* batch shape. Both matter: the un-jitted nnx call runs
+    # eagerly at ~6 frame/s against ~190 for the torch DINOv2 path, and jit
+    # retraces on every new input shape, so a ragged final batch would recompile
+    # once per episode and give most of the speedup back. Short batches are padded
+    # and trimmed instead.
+    encode_batch = jax.jit(tokenizer.__call__)
     print(f"loaded pi0.5 SigLIP; out dir {out_path(pending[0]).parent}", flush=True)
 
     import time
@@ -106,12 +113,17 @@ def main() -> int:
         chunks = []
         for lo in range(0, len(images), args.batch):
             batch = images[lo : lo + args.batch]
+            n = len(batch)
+            if n < args.batch:
+                # Pad to the fixed shape so jit does not retrace, then trim below.
+                pad = np.repeat(batch[-1:], args.batch - n, axis=0)
+                batch = np.concatenate([batch, pad], axis=0)
             # mem_buffer.add_buffer, verbatim: to [-1, 1] first, then resize_with_pad.
             x = jnp.array(batch.astype(np.float32) / 255.0 * 2.0 - 1.0)
             x = image_tools.resize_with_pad(x, 224, 224)
-            out = tokenizer(x[:, None])                     # (b, 1, p, 2048)
-            pooled = pool_tokens_to_size(out, target)       # (b, 1, target, 2048)
-            chunks.append(np.asarray(jax.device_get(pooled))[:, 0])
+            out = encode_batch(x[:, None])                   # (b, 1, p, 2048)
+            pooled = pool_tokens_to_size(out, target)        # (b, 1, target, 2048)
+            chunks.append(np.asarray(jax.device_get(pooled))[:n, 0])
         feats = np.concatenate(chunks, axis=0).astype(np.float16)
 
         expected = (ep.n_frames, target, 2048)
