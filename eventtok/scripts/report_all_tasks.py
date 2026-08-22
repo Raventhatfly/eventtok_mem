@@ -7,10 +7,42 @@ to over 50% -- so the ranking column is **gain over that task's own majority
 baseline**, and the raw accuracy is printed beside it rather than instead of it.
 
 The analysis this is for: the pipeline was developed on SwingXtimes, ButtonUnmask and
-PickXtimes, and the hypothesis is that it works where events are motions and fails
+PickXtimes, and the hypothesis was that it works where events are motions and fails
 where an event is defined by something off the trajectory -- a demo video to imitate,
-an occluded object. The Video* tasks are the natural test of that, since they are the
-ones carrying a pre-execution prefix.
+an occluded object. The Video* tasks were the natural test, being the ones with a
+pre-execution prefix.
+
+Result, at k=16 and min_frequency=10 on all 16 tasks (gains over each task's own
+majority-label rate):
+
+    development tasks   n=3    median gain +22.3%   median BPE F1 0.277
+    unseen tasks        n=13   median gain +23.1%   median BPE F1 0.301
+
+No gap. The numbers reported through this project describe the method rather than the
+three tasks it was tuned on, which was not safe to assume -- every retraction here came
+from generalising a single task.
+
+Three things the wider set changed:
+
+* **Vision does not generally help.** Median vision-minus-action is -1.0%, and vision
+  leads on only 5 of 16 tasks. The earlier "vision is the stronger modality" was
+  ButtonUnmask-specific. Combining still wins, but by +2.3% median over the better
+  single modality on 10 of 16 tasks, not the +5-7 the two-task table implied.
+  PatternLock is the sharp case: action +42.0%, the best action gain anywhere, while
+  vision lands *below* its majority baseline at -1.9% and drags the combination down
+  to +21.0%.
+* **The demo-prefix hypothesis is refuted.** Video* tasks do *better*, median +25.9%
+  against +22.3%, with VideoPlaceOrder second overall.
+* **Boundaries are poor on every task**, so that was not task-specific either. Best
+  BPE F1 across all 16 is 0.456, median near 0.30, over-segmentation 0.9x to 4.1x.
+  StopCube shows the split most clearly: 0.9x over-segmentation -- almost exactly the
+  right number of tokens -- at F1 0.011. Right count, wrong places.
+
+Two caveats when reading the table. VideoUnmask and VideoUnmaskSwap have majority
+rates of 91.4% and 85.8%, so there is almost nothing left to predict and their +0.0%
+is uninformative rather than a failure. And gain-over-majority is mechanically larger
+when the majority rate is low (r = -0.45 across tasks); no task property predicts the
+gain strongly, the largest being events per episode at r = +0.36.
 """
 
 from __future__ import annotations
