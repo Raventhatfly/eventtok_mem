@@ -90,15 +90,17 @@ def main() -> None:
     test_ids = [eps[i].epis_idx for i in order[cut:]]
     train_set = set(train_ids)
 
-    rows, epis_of_row, frame_of_row = [], [], []
+    rows, epis_of_row, frame_of_row, exec_of_row = [], [], [], []
     for ep in eps:
         lo, hi = meta.rows(ep.epis_idx)
         rows.extend(range(lo, hi))
         epis_of_row.extend([ep.epis_idx] * (hi - lo))
         frame_of_row.extend(range(hi - lo))
+        exec_of_row.extend([ep.exec_start] * (hi - lo))
     rows = np.asarray(rows)
     epis_of_row = np.asarray(epis_of_row)
     frame_of_row = np.asarray(frame_of_row)
+    exec_of_row = np.asarray(exec_of_row)
     train_mask = np.array([e in train_set for e in epis_of_row])
 
     blocks_raw = {"action": action_matrix(meta, rows)}
@@ -109,8 +111,13 @@ def main() -> None:
             getter = dino.EpisodeDinoFeatures(
                 args.task, args.encoder, args.scale, args.camera
             )
+        # Absolute-frame sources need exec_start added; pkl-derived ones do not.
+        offsets = (
+            exec_of_row if getattr(getter, "indexes_absolute_frames", True)
+            else np.zeros_like(exec_of_row)
+        )
         blocks_raw["vision"] = vision_matrix(
-            getter, epis_of_row, frame_of_row, args.horizon, "both"
+            getter, epis_of_row, frame_of_row, args.horizon, "both", offsets
         )
 
     fitted = {

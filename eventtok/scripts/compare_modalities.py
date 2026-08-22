@@ -123,18 +123,32 @@ def action_matrix(meta: TaskMeta, rows: np.ndarray) -> np.ndarray:
 
 
 def vision_matrix(
-    getter, epis_idx_of_row: np.ndarray, frame_of_row: np.ndarray, k: int, form: str
+    getter,
+    epis_idx_of_row: np.ndarray,
+    frame_of_row: np.ndarray,
+    k: int,
+    form: str,
+    offset_of_row: np.ndarray | None = None,
 ) -> np.ndarray:
     """``feat_t`` and/or ``feat_{t+k} - feat_t``, flattened, per row.
 
     The residual is included because the state alone is nearly constant over k
     frames -- the same reason the prediction head collapsed when it was asked to
     reproduce ``feat_next`` directly rather than the change.
+
+    ``frame_of_row`` counts execution frames from 0, matching ``TaskMeta``. Sources
+    that index absolute frames (``repack.EpisodeFeatures``) need ``ep.exec_start``
+    added; sources encoded from the pkls (``EpisodeDinoFeatures``) do not. Pass
+    ``offset_of_row`` accordingly -- the caller reads ``indexes_absolute_frames`` off
+    the getter rather than guessing, because the two agree on every task with no
+    pre-execution prefix and would diverge silently elsewhere.
     """
     out = []
-    for epis_idx, t in zip(epis_idx_of_row, frame_of_row):
+    if offset_of_row is None:
+        offset_of_row = np.zeros(len(frame_of_row), dtype=np.int64)
+    for epis_idx, t, off in zip(epis_idx_of_row, frame_of_row, offset_of_row):
         arr = getter[int(epis_idx)]
-        t = int(t)
+        t = int(t) + int(off)
         nxt = min(t + k, len(arr) - 1)
         a = np.asarray(arr[t], dtype=np.float32).ravel()
         b = np.asarray(arr[nxt], dtype=np.float32).ravel()
@@ -191,15 +205,18 @@ def main() -> None:
     cut = len(eps) // 2
     train_eps = {eps[i].epis_idx for i in order[:cut]}
 
-    rows, epis_of_row, frame_of_row = [], [], []
+    rows, epis_of_row, frame_of_row, exec_of_row = [], [], [], []
     for ep in eps:
         lo, hi = meta.rows(ep.epis_idx)
         rows.extend(range(lo, hi))
         epis_of_row.extend([ep.epis_idx] * (hi - lo))
         frame_of_row.extend(range(hi - lo))
+        exec_of_row.extend([ep.exec_start] * (hi - lo))
     rows = np.asarray(rows)
     epis_of_row = np.asarray(epis_of_row)
     frame_of_row = np.asarray(frame_of_row)
+    exec_of_row = np.asarray(exec_of_row)
+    zero_of_row = np.zeros_like(exec_of_row)
     train_mask = np.array([e in train_eps for e in epis_of_row])
     print(
         f"{args.task}: {len(eps)} episodes, {len(rows)} transitions, "
@@ -221,8 +238,13 @@ def main() -> None:
                 getter = repack.EpisodeFeatures(args.task, args.scale)
             else:
                 getter = dino.EpisodeDinoFeatures(args.task, enc, args.scale, cam)
+            offsets = (
+                exec_of_row if getattr(getter, "indexes_absolute_frames", True)
+                else zero_of_row
+            )
             raw[key] = vision_matrix(
-                getter, epis_of_row, frame_of_row, args.horizon, args.vision_form
+                getter, epis_of_row, frame_of_row, args.horizon, args.vision_form,
+                offsets,
             )
     for name, X in raw.items():
         print(f"  block {name:16s} {X.shape}", flush=True)

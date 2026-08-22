@@ -204,13 +204,15 @@ def encode_episode(
     for camera in todo:
         out = written[camera]
         images = frames[camera]
-        if len(images) != ep.n_frames:
+        # n_exec, not n_frames: the pkls hold execution frames only, and the two
+        # differ for every episode with a pre-execution prefix.
+        if len(images) != ep.n_exec:
             raise ValueError(
                 f"episode {ep.epis_idx}: read {len(images)} frames, index says "
-                f"{ep.n_frames}"
+                f"{ep.n_exec} execution frames"
             )
         feats = encoder.encode(images, scale=scale)
-        expected = (ep.n_frames, _N_TOKENS[scale], encoder.width)
+        expected = (ep.n_exec, _N_TOKENS[scale], encoder.width)
         if feats.shape != expected:
             raise ValueError(f"episode {ep.epis_idx}: {feats.shape} != {expected}")
 
@@ -225,7 +227,16 @@ def encode_episode(
 
 
 class EpisodeDinoFeatures:
-    """Lazy mmap view over the DINO cache, mirroring ``repack.EpisodeFeatures``."""
+    """Lazy mmap view over the DINO cache.
+
+    ``indexes_absolute_frames`` is False, **unlike** ``repack.EpisodeFeatures``: these
+    features are encoded from the pkls, which hold execution frames only, so rows run
+    over ``range(ep.n_exec)``. The two conventions coincide on any task with
+    ``exec_start == 0`` -- which is every task used so far -- and diverge on the 900
+    episodes that have a pre-execution prefix.
+    """
+
+    indexes_absolute_frames = False
 
     def __init__(
         self, task: str, model: str = "dinov2l", scale: str = "2x2", camera: str = "image"

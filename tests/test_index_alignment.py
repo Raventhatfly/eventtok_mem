@@ -119,3 +119,34 @@ def test_observable_label_collapses_object_identity() -> None:
     a = "move to the top of the right-side target for the first time"
     b = "move to the top of the right-side target for the second time"
     assert sg.observable_label(a) == sg.observable_label(b)
+
+
+def test_feature_sources_declare_their_frame_convention() -> None:
+    """The two caches index different things, and the difference is invisible so far.
+
+    ``repack.EpisodeFeatures`` covers ``range(ep.n_frames)`` -- every frame including
+    the pre-execution prefix -- because the source npys are written per frame.
+    ``dino.EpisodeDinoFeatures`` covers ``range(ep.n_exec)`` because it is encoded
+    from the pkls, which hold execution frames only. They agree exactly when
+    ``exec_start == 0``, which is true of every task used so far, so a caller that
+    assumed one convention would read correct data on SwingXtimes, ButtonUnmask and
+    PickXtimes and the pre-execution demo video on the Video tasks.
+    """
+    from eventtok.data import dino, repack
+
+    assert repack.EpisodeFeatures.indexes_absolute_frames is True
+    assert dino.EpisodeDinoFeatures.indexes_absolute_frames is False
+
+
+def test_prefix_episodes_have_more_frames_than_pkls(index: RoboMMEIndex) -> None:
+    """n_frames and n_exec genuinely diverge, so the convention above matters."""
+    with_prefix = [ep for ep in index.episodes if ep.exec_start > 0]
+    assert with_prefix, "no prefix episodes; the offset logic would be untestable"
+    for ep in with_prefix[:50]:
+        assert ep.n_exec == ep.n_frames - ep.exec_start
+        assert ep.n_exec < ep.n_frames
+
+    # And the tasks used for every result so far are all prefix-free, which is why
+    # the bug stayed hidden.
+    for task in ("SwingXtimes", "ButtonUnmask", "PickXtimes"):
+        assert all(ep.exec_start == 0 for ep in index.by_task(task))

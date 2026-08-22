@@ -103,7 +103,16 @@ def repack_task(
 
 
 class EpisodeFeatures:
-    """Lazy per-episode view over the repacked cache."""
+    """Lazy per-episode view over the repacked cache.
+
+    ``indexes_absolute_frames`` is True: rows run over ``range(ep.n_frames)``,
+    which **includes any pre-execution prefix**. 900 of 1600 episodes have one, so a
+    caller holding a row index into ``TaskMeta`` (execution frames only) must add
+    ``ep.exec_start`` before indexing here. Getting that wrong reads the pre-execution
+    demo video instead of the execution and fails silently.
+    """
+
+    indexes_absolute_frames = True
 
     def __init__(self, task: str, scale: str = "2x2") -> None:
         self.task = task
