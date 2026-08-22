@@ -28,6 +28,33 @@ boundary and every number comes out high.
 Report the majority baseline on the same line as the accuracy, always. The majority
 class is ~50% on ButtonUnmask and ~30% on SwingXtimes; an accuracy without it is
 unreadable, which is a mistake this project has already made four times.
+
+What this script has measured so far, with camera and encoder varied one at a time
+(vision-only rows, held-out episodes, swept over k because the first version of this
+result was read off k=32 and was wrong):
+
+    camera effect, encoder fixed (siglip base -> siglip wrist)
+        ButtonUnmask   +6.7  +11.9   +8.7   +7.2      (k = 16, 32, 64, 128)
+        SwingXtimes    +3.6   +0.8   +0.9   +1.7
+
+    encoder effect, camera fixed (siglip -> dinov2l)
+        ButtonUnmask   +2.5   +6.0   +2.7   +2.4
+        SwingXtimes    -1.2   -0.8   -2.1   -0.4
+
+So the encoder is close to a wash -- DINOv2 is consistently *worse* than SigLIP as a
+standalone source on SwingXtimes -- while the camera is worth several times as much
+and is positive on both tasks. The available gain was a camera the pipeline was
+discarding: RoboMME's shipped features use num_views=1 over the third-person image,
+so wrist_image sits unused in every pkl. Once the wrist camera is in, the encoder
+matters even less (dinov2l_wrist and siglip_wrist within 0.5 points at k >= 32 on
+ButtonUnmask). action + siglip_wrist reaches 98.6% at k=128 against 51.8% majority.
+
+Two cautions carried by the same grid. The best single condition changes with k on
+both tasks, so no one row is the result -- though every winner at every k does include
+the wrist camera. And label accuracy rises monotonically with k, so it cannot be used
+alone to pick a codebook size; see scripts/sweep_k_tradeoff.py, where counting stays
+at 92-100% across the whole range while the stream fragments from 26 to 76 run
+symbols per episode.
 """
 
 from __future__ import annotations
