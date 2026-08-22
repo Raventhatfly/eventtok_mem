@@ -16,6 +16,26 @@ Keep this in the comparison for every future result. A learned tokenizer that
 loses to Lloyd's algorithm is not worth its complexity, and saying so early is
 cheaper than discovering it in an ablation table.
 
+**That sentence sat here untested for the whole project. It has now been tested, and
+the learned tokenizer loses.** FSQ (8,8) = 64 codes against k-means k=64 -- matched,
+because the k sweep showed vocabulary size dominates everything else -- on all 16
+tasks, both scored through the same code path with the same split, labels and BPE
+settings:
+
+    variant      token identity (median)   ahead    boundary F1 (median)   ahead
+    neural-a           -0.5%               7/16          -0.009            6/16
+    neural-av          -7.1%               2/16          -0.044            4/16
+
+Action-only ties. Action+vision loses clearly, and loses to neural action-only as
+well, reproducing on 16 tasks what ``models/tokenizer.py`` recorded from one: vision on
+the *input* side pulls the code toward trajectory phase rather than motion type. The
+neural model is not collapsing either -- it keeps 77% and 88% of its codes alive -- so
+it loses while using its vocabulary.
+
+The caveat that belongs with it: one recipe, one codebook size, 30 epochs, no
+hyperparameter search. A tuned learned tokenizer could still win. What this rules out
+is building on the learned path *by default*.
+
 **This class is action-only, and that is a deliberate limit, not a finding about
 vision.** An earlier version of this docstring claimed the action trajectory rather
 than vision defines the event. That was wrong, and it was wrong for a measurable
