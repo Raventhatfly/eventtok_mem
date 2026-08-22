@@ -42,20 +42,17 @@ amplitude, no decay, no retrieval.
 
 ## Docs
 
-| file | contents |
-|---|---|
-| [`docs/EVENT_TOKENIZER_PLAN.md`](docs/EVENT_TOKENIZER_PLAN.md) | the research plan — design, experiments, prior art, risks |
-| [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) | positioning and the novelty threats (WeaveLA, KEMO, EventVLA) |
-| [`docs/_archive_event_tokenizer_v1.md`](docs/_archive_event_tokenizer_v1.md) | exploratory version, kept for the reasoning trail |
-| `docs/archive/` | the parked spiking-memory line (see below) |
+`docs/` holds the research plan, prior-art notes and the parked spiking-memory design notes. It is
+gitignored — working notes, not part of the published code. What matters for reading the code is in the
+module docstrings, which record the measurements and the designs that failed.
 
 ## Status
 
-Codebase under construction. See the plan for milestones M0–M4.
+Codebase under construction.
 
 ## Archive
 
 This repo began as `ssn_robotic_memory`, an STDP-trained spiking memory bank. That line is parked, not
-deleted — `archive/spikebank/` has the implementation and `docs/archive/` the design notes and measured
-results. Two findings from it survive into the current design: novelty gating as an event-boundary
+deleted — `archive/spikebank/` has the implementation, and the design notes live in the (untracked)
+`docs/archive/`. Two findings from it survive into the current design: novelty gating as an event-boundary
 signal, and nested-dropout ordering for coarse-to-fine event tokens.
