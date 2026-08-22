@@ -167,5 +167,33 @@ def main() -> None:
             )
 
 
+    tok = [r for r in rows if r.get("token_instances")]
+    if tok:
+        print(f"\n  BPE TOKEN identity -- the codes that would enter the log, one vote")
+        print(f"  {'task':<{w}} {'tok acc':>9} {'majority':>9} {'gain':>8} "
+              f"{'purity':>7} {'straddle':>9} {'per-frame gain':>15}")
+        for r in sorted(tok, key=lambda r: -r["token_gain"]):
+            print(
+                f"  {r['task']:<{w}} {r['token_accuracy']:>8.1%} "
+                f"{r['token_majority']:>8.1%} {r['token_gain']:>+7.1%} "
+                f"{r['mean_purity']:>7.2f} {r['straddle_fraction']:>8.0%} "
+                f"{r['gain_action']:>+14.1%}"
+            )
+        tg = np.array([r["token_gain"] for r in tok])
+        fg = np.array([r["gain_action"] for r in tok])
+        pur = np.array([r["mean_purity"] for r in tok])
+        print(
+            f"\n  token gain vs per-frame action gain: median {np.median(tg):+.1%} "
+            f"vs {np.median(fg):+.1%}, token ahead on {int((tg > fg).sum())}/{len(tg)}"
+        )
+        print(
+            f"  mean purity across tasks {pur.mean():.2f} -- "
+            f"{(1 - pur.mean()):.0%} of a typical token's frames carry a different "
+            f"label than the one it is named with"
+        )
+        print(f"  correlation(purity, token gain) r = {_corr(pur, tg):+.2f}")
+
+
+
 if __name__ == "__main__":
     main()

@@ -41,6 +41,7 @@ from ..data.index import RoboMMEIndex
 from ..data.meta import TaskMeta
 from ..eval.bpe_boundaries import report as boundary_report, runs_with_spans
 from ..eval.repeatability import label_accuracy, label_mutual_information
+from ..eval.token_identity import report as token_report
 from .compare_modalities import Block, action_matrix, kmeans_fit_predict, vision_matrix
 
 
@@ -171,6 +172,15 @@ def main() -> None:
                 {ep.epis_idx: ep for ep in test_eps},
                 meta, vocab, args.min_span, args.tolerance,
             )
+            # Name the BPE tokens themselves. Every other identity number here is
+            # per-frame cluster ids; this is the one that describes what would
+            # actually go into the log.
+            t = token_report(
+                {ep.epis_idx: streams[ep.epis_idx] for ep in eps},
+                {ep.epis_idx: ep for ep in eps},
+                meta, vocab, train_set, args.min_span,
+            )
+            row.update(t)
             row.update({
                 "runs_f1": b["runs_f1"], "bpe_f1": b["bpe_f1"],
                 "bpe_precision": b["bpe_precision"], "bpe_recall": b["bpe_recall"],
@@ -184,6 +194,15 @@ def main() -> None:
         print(
             f"  boundaries     runs F1 {row['runs_f1']:.3f} -> bpe F1 {row['bpe_f1']:.3f}"
             f"   over-seg {row['over_segmentation_bpe']:.1f}x",
+            flush=True,
+        )
+    if row.get("token_instances"):
+        print(
+            f"  TOKEN identity {row['token_accuracy']:6.1%} "
+            f"(majority {row['token_majority']:.1%}, gain {row['token_gain']:+.1%})  "
+            f"purity {row['mean_purity']:.2f}  "
+            f"straddling {row['straddle_fraction']:.0%}  "
+            f"unnamed {row['unseen_token_rate']:.0%}",
             flush=True,
         )
 
