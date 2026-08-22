@@ -2,6 +2,11 @@
 
     python -m eventtok.scripts.train_tokenizer --task SwingXtimes --epochs 4
 
+Built for preemptible partitions (``kempner_requeue``): checkpoints every
+``--save-every`` steps, resumes mid-epoch by default, and on SIGUSR1/SIGTERM saves
+at the next step boundary and exits with ``REQUEUE_EXIT_CODE`` (85) so the batch
+script can requeue itself.
+
 Logs both head losses separately, plus codebook usage and the per-channel FSQ
 level histogram. The per-channel histogram is the one that matters: FSQ cannot
 have dead codes the way VQ does, but a channel collapsing onto one or two levels
@@ -13,12 +18,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
+import sys
 import time
 
 import torch
 from torch.utils.data import DataLoader
 
 from .. import paths
+from ..train import checkpoint as ckpt
 from ..data.index import RoboMMEIndex
 from ..data.robomme import TransitionDataset
 from ..models.tokenizer import EventTokenizer, losses
@@ -90,6 +98,11 @@ def main() -> None:
     ap.add_argument("--limit-episodes", type=int, default=None)
     ap.add_argument("--out", default=None, help="checkpoint path")
     ap.add_argument("--device", default=None)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--save-every", type=int, default=200,
+                    help="checkpoint every N optimizer steps (0 = epoch ends only)")
+    ap.add_argument("--resume", default="auto", choices=["auto", "never"],
+                    help="auto resumes from --out if it exists")
     args = ap.parse_args()
 
     paths.check_root()
@@ -119,8 +132,11 @@ def main() -> None:
         flush=True,
     )
 
+    # A per-epoch seeded generator makes the batch order reproducible, which is
+    # what lets a mid-epoch resume skip forward to the exact same position.
+    gen = torch.Generator()
     loader = DataLoader(
-        dataset, batch_size=args.batch, shuffle=True,
+        dataset, batch_size=args.batch, shuffle=True, generator=gen,
         num_workers=args.workers, drop_last=True, pin_memory=(device.type == "cuda"),
     )
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
@@ -128,14 +144,48 @@ def main() -> None:
         opt, T_max=max(1, args.epochs * len(loader))
     )
 
-    history = []
-    for epoch in range(args.epochs):
+    out_path = pathlib.Path(
+        args.out
+        or paths.CACHE_ROOT / "ckpt" / f"tokenizer_{args.task}_{'x'.join(map(str, args.levels))}.pt"
+    )
+
+    torch.manual_seed(args.seed)
+    state = ckpt.TrainState(seed=args.seed)
+    if args.resume == "auto":
+        blob = ckpt.load(out_path, map_location=device)
+        if blob is not None:
+            state = ckpt.restore(blob, model, opt, sched)
+            print(
+                f"[resume] epoch {state.epoch}, step_in_epoch {state.step_in_epoch}, "
+                f"global_step {state.global_step}",
+                flush=True,
+            )
+
+    preempt = ckpt.PreemptionHandler().install()
+
+    def checkpoint_now() -> None:
+        ckpt.save(out_path, model, opt, sched, state, vars(args))
+
+    history = state.history
+    # Captured before the loop: state.epoch is reassigned each iteration, so
+    # comparing against it inside the loop would make the skip always fire.
+    resume_epoch, resume_step = state.epoch, state.step_in_epoch
+    for epoch in range(resume_epoch, args.epochs):
+        state.epoch = epoch
+        gen.manual_seed(args.seed * 100003 + epoch)
         model.train()
         agg = {"action": 0.0, "total": 0.0}
         n = 0
         last_tokens = last_digits = None
         t0 = time.time()
+        # Resuming mid-epoch: the sampler is reseeded per epoch, so the batch
+        # order is reproducible and skipping restores the exact position.
+        skip = resume_step if epoch == resume_epoch else 0
+        if skip:
+            print(f"  [resume] skipping {skip} batches of epoch {epoch}", flush=True)
         for step, batch in enumerate(loader):
+            if step < skip:
+                continue
             feat_t = batch["feat_t"].to(device, non_blocking=True)
             feat_next = batch["feat_next"].to(device, non_blocking=True)
             actions = batch["actions"].to(device, non_blocking=True)
@@ -158,7 +208,21 @@ def main() -> None:
             if "far_cos" in loss:
                 agg["far_cos"] = agg.get("far_cos", 0.0) + float(loss["far_cos"])
             n += 1
+            state.step_in_epoch = step + 1
+            state.global_step += 1
             last_tokens, last_digits = out.tokens.detach(), out.digits.detach()
+
+            if args.save_every and state.global_step % args.save_every == 0:
+                checkpoint_now()
+
+            if preempt.should_stop:
+                checkpoint_now()
+                print(
+                    f"[preempt] checkpointed at epoch {epoch} step {step + 1}; "
+                    f"exiting {ckpt.REQUEUE_EXIT_CODE} to request requeue",
+                    flush=True,
+                )
+                sys.exit(ckpt.REQUEUE_EXIT_CODE)
 
             if step % 50 == 0:
                 extra = (
@@ -179,6 +243,12 @@ def main() -> None:
             **stats,
         }
         history.append(record)
+        state.history = history
+        # Point at the *next* epoch so a resume does not redo this one. Mid-epoch
+        # saves inside the loop above keep state.epoch == epoch on purpose.
+        state.epoch = epoch + 1
+        state.step_in_epoch = 0
+        checkpoint_now()
         chans = " ".join(
             f"{c['levels_used']}/{c['levels']}(H={c['entropy']:.2f})"
             for c in stats["channels"]
@@ -191,23 +261,10 @@ def main() -> None:
             flush=True,
         )
 
-    out_path = args.out or str(
-        paths.CACHE_ROOT / "ckpt" / f"tokenizer_{args.task}_{'x'.join(map(str, args.levels))}.pt"
-    )
-    import pathlib
-
-    p = pathlib.Path(out_path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "args": vars(args),
-            "history": history,
-        },
-        p,
-    )
-    print("saved", p, flush=True)
-    print(json.dumps(history[-1], indent=2))
+    checkpoint_now()
+    print("saved", out_path, flush=True)
+    if history:
+        print(json.dumps(history[-1], indent=2))
 
 
 if __name__ == "__main__":
