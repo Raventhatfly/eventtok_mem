@@ -6,6 +6,12 @@ Two properties, reported separately because they can come apart:
 event vocabulary sits near 0%. A fine-grained trajectory code sits high, and then
 "the code changed" is useless as a boundary signal.
 
+**Always report a baseline on the same line.** Four numbers in this project were
+misread for want of one: max-token counting (48% vs 31-37% chance, i.e. nothing),
+a circular n-gram metric (chose the gram by the answer), counting with no chance
+baseline at all, and MI/H read as an accuracy (53.9% MI is 80.5% accuracy against
+a 49.6% majority). Use :func:`label_accuracy`, which returns its own baseline.
+
 **Recoverability** — whether a recurring n-gram occurs exactly N times, where N is
 the episode's target repetition count. This can hold even when stability fails,
 because a repeated *motion* leaves a repeated *subsequence*. That is the property
@@ -67,10 +73,17 @@ def within_event_stability(
 def best_repeating_ngram(
     codes: Sequence[int], target: int, min_len: int = 4, max_len: int = 16
 ) -> tuple[tuple[int, ...], int, int] | None:
-    """The recurring n-gram whose occurrence count is closest to ``target``.
+    """DO NOT USE FOR EVALUATION -- this is circular.
 
-    Returns ``(gram, occurrences, length)``. Ties prefer the longer gram, since a
-    longer match is less likely to be coincidental.
+    It selects the n-gram whose occurrence count is closest to ``target`` (= N),
+    then callers report how often that count equals N. Using the answer to pick
+    the thing being tested guarantees a high score. The "29/40 n-grams match N"
+    figure it produced was meaningless.
+
+    Kept only for exploratory inspection of what patterns exist in a stream.
+    For a real measurement use ``eventtok.eval.counting``: pick the pattern on a
+    train split and evaluate its count on held-out episodes. Done that way,
+    SwingXtimes gives 49/50 = 98% against a 37% (sd 6) shuffled-label baseline.
     """
     best = None
     for length in range(min_len, max_len + 1):
@@ -111,6 +124,8 @@ def report(
         changes += stab.changes
         total += stab.transitions
 
+        # Circular by construction -- see best_repeating_ngram's docstring. Kept
+        # in the dict for inspection only; do not report it as accuracy.
         found = best_repeating_ngram(codes, ep.count or 0, min_len, max_len)
         occ = found[1] if found else 0
         if ep.count is not None:
@@ -135,9 +150,10 @@ def report(
     return {
         "within_event_change_rate": changes / max(total, 1),
         "mean_code_run": total / max(changes, 1),
-        "ngram_exact": exact,
-        "ngram_over": over,
-        "ngram_under": under,
+        # NOT an accuracy: the gram was chosen using N. Inspection only.
+        "ngram_exact_CIRCULAR": exact,
+        "ngram_over_CIRCULAR": over,
+        "ngram_under_CIRCULAR": under,
         "episodes": n,
         "exact_frac": exact / n,
         "rows": rows,
@@ -228,6 +244,41 @@ def _entropy(values: Sequence) -> float:
     counts = Counter(values)
     n = sum(counts.values()) or 1
     return -sum((c / n) * math.log(c / n) for c in counts.values() if c)
+
+
+def label_accuracy(
+    codes: Sequence[int], labels: Sequence[str], train_mask: Sequence[bool]
+) -> tuple[float, float]:
+    """(accuracy, majority baseline) for predicting the event label from the code.
+
+    **Prefer this over MI/H when reporting.** MI as a fraction of label entropy is
+    hard to saturate, so it reads pessimistically: 53.9% MI on ButtonUnmask is
+    80.5% label accuracy against a 49.6% majority baseline. Quoting the MI led to
+    calling a working result "stuck".
+
+    Each code is mapped to its majority label on the train frames, then evaluated
+    on the rest. Always report the baseline alongside — the majority class is 50%
+    on ButtonUnmask and 30% on SwingXtimes, so accuracy alone is unreadable.
+    """
+    codes = list(codes)
+    labels = list(labels)
+    train_mask = list(train_mask)
+    per_code: dict[int, Counter] = {}
+    for c, l, m in zip(codes, labels, train_mask):
+        if m:
+            per_code.setdefault(c, Counter())[l] += 1
+    test_labels = [l for l, m in zip(labels, train_mask) if not m]
+    if not test_labels:
+        return 0.0, 0.0
+    fallback = Counter(test_labels).most_common(1)[0][0]
+    mapping = {c: cnt.most_common(1)[0][0] for c, cnt in per_code.items()}
+    correct = sum(
+        1
+        for c, l, m in zip(codes, labels, train_mask)
+        if not m and mapping.get(c, fallback) == l
+    )
+    majority = Counter(test_labels).most_common(1)[0][1] / len(test_labels)
+    return correct / len(test_labels), majority
 
 
 def mutual_information(a: Sequence, b: Sequence) -> float:

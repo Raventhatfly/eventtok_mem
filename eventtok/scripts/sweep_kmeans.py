@@ -88,7 +88,7 @@ def main() -> None:
         "boundary_recall": rep["boundary_recall"],
         "boundary_f1": rep["boundary_f1"],
         "label_mi_frac": rep["label_mi_frac"],
-        "ngram_exact": rep["ngram_exact"],
+        "ngram_exact_CIRCULAR": rep["ngram_exact_CIRCULAR"],
         "merges": len(vocab.merges),
         "vocab": vocab.size,
         "mean_log_len": sum(log_lens) / max(len(log_lens), 1),

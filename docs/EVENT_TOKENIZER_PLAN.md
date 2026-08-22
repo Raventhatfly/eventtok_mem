@@ -343,6 +343,66 @@ general mechanism from a coincidence of that task's structure.
 
 ---
 
+## 4g. Corrected results, with baselines (2026-08-21)
+
+Every headline number in the two sections above was reported on an uncalibrated
+scale. Corrected, with baselines on the same line.
+
+### Counting: works, on held-out episodes
+
+Pattern selected on 50 train episodes using train N only, then that **fixed**
+pattern's occurrence count evaluated on 50 held-out episodes:
+
+| pattern length | train | **test** | chance (sd) | pattern |
+|---|---|---|---|---|
+| 1 | 98 % | **100 %** | 35 % (7) | `(13,)` |
+| 2 | 98 % | **100 %** | 35 % (7) | `(13, 12)` |
+| 3 | 96 % | **100 %** | 35 % (7) | `(26, 13, 12)` |
+| 4 | 90 % | 90 % | 32 % (6) | `(0, 16, 26, 13)` |
+| 6 | 74 % | 74 % | 30 % (6) | `(8, 0, 16, 26, 13, 12)` |
+
+The patterns are **nested** — one swing is the run-symbol sequence
+`0 16 26 13 12`, and any contiguous piece of it counts the swings. So the
+length-1 result is not a degenerate shortcut; it is the most robust member of a
+real multi-symbol pattern.
+
+Two things to note. This is **action-only k-means with no BPE at all**, so whether
+the BPE stage contributes to counting is still an open question. And selecting the
+pattern uses train N, which is legitimate supervision for *which* event to count,
+but means the system must be told which event matters.
+
+### Event identity: report accuracy, not MI
+
+Predicting the observable event label from the code, cluster→majority-label fitted
+on train frames, evaluated on held-out frames:
+
+| input | ButtonUnmask (3 labels) | SwingXtimes (5 labels) |
+|---|---|---|
+| majority baseline | 49.6 % | 30.0 % |
+| action | 77.4 % | 80.9 % |
+| vision | 76.6 % | 60.3 % |
+| **action + vision** | **80.5 %** | **87.2 %** |
+
+Multimodal gain: **+3.1** and **+6.3** points. Real, modest, and on a readable
+scale — unlike MI/H, where the same ButtonUnmask result reads as "53.9 %" and
+invites the conclusion that it is half broken. It is not: 80.5 % against a 49.6 %
+baseline.
+
+### Four metric failures, one cause
+
+1. `max(token_count) == N` — 48 %, chance 31–37 %. Nothing.
+2. `best_repeating_ngram(codes, target=N)` — selected the gram *by* the answer.
+   Its "29/40" was meaningless. Now flagged `_CIRCULAR` in the code.
+3. Counting reported with no chance baseline for several turns.
+4. MI/H read as though it were an accuracy.
+
+All four are the same mistake: a number quoted without its baseline.
+`eval.repeatability.label_accuracy()` now returns its baseline alongside the
+score so this is harder to repeat.
+
+
+---
+
 ## 5. Experiments
 
 **E1 — does a memory string change behaviour at all? (week 1, before building)**

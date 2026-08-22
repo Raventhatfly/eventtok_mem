@@ -53,8 +53,8 @@ def main() -> None:
         f"(mean code run {res['mean_code_run']:.1f} transitions)"
     )
     print(
-        f"  n-gram == N: exact {res['ngram_exact']}/{res['episodes']} "
-        f"({res['exact_frac']:.0%})  over {res['ngram_over']}  under {res['ngram_under']}"
+        f"  [circular, inspection only] n-gram==N {res['ngram_exact_CIRCULAR']}"
+        f"/{res['episodes']} -- the gram was chosen using N; use eval.counting"
     )
     out = paths.CACHE_ROOT / "eval" / f"repeatability_{'x'.join(map(str, cfg['levels']))}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
