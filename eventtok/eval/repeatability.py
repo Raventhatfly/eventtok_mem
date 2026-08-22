@@ -196,13 +196,18 @@ def boundary_score(
 
 
 def label_mutual_information(
-    codes: Sequence[int], ep: Episode, meta: TaskMeta
+    codes: Sequence[int], ep: Episode, meta: TaskMeta, observable: bool = True
 ) -> tuple[list[int], list[str]]:
-    """Paired (code, canonical event label) samples, for MI over a whole task.
+    """Paired (code, event label) samples, for MI over a whole task.
 
-    Labels are canonicalised so repetitions share one label — otherwise "for the
-    second time" reads as a different event and a correctly working tokenizer
-    scores as a failure.
+    Two canonicalisations, both necessary, both of which otherwise make a working
+    tokenizer look broken:
+
+    * repetition ordinals are stripped, or "for the second time" reads as a
+      different event from "for the first time";
+    * with ``observable=True`` (default) object identity is collapsed too, because
+      on occlusion tasks the named object is hidden at the moment of the action and
+      varies only across episodes. See :func:`subgoals.observable_label`.
     """
     segments = sg.segments_from_track(meta.episode_labels(ep.epis_idx), ep.exec_start)
     out_codes: list[int] = []
@@ -212,7 +217,8 @@ def label_mutual_information(
         hi = min(s.end - ep.exec_start, len(codes))
         span = codes[lo:hi]
         out_codes.extend(int(c) for c in span)
-        out_labels.extend([sg.canonical_label(s.label)] * len(span))
+        label = sg.observable_label(s.label) if observable else sg.canonical_label(s.label)
+        out_labels.extend([label] * len(span))
     return out_codes, out_labels
 
 

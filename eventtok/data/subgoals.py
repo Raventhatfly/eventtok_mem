@@ -151,6 +151,31 @@ def ordinal(label: str) -> int | None:
     return _ORDINALS[match.group(1).lower()] if match else None
 
 
+_OBJECT = re.compile(r"\b(red|green|blue|yellow|purple|orange)\b", re.IGNORECASE)
+
+
+def observable_label(label: str) -> str:
+    """Canonical label with object identity collapsed to ``<obj>``.
+
+    **Use this, not the raw label, when scoring what a per-transition code can
+    know.** RoboMME's subgoals name the object — "pick up the container that hides
+    the *red* cube" — but on occlusion tasks that object is *hidden by the
+    container* at pick time and the colour varies only across episodes (ButtonUnmask:
+    red 0.50/ep, green 0.30, blue 0.45, at most one pick each). No code computed
+    from a single transition can carry it, so scoring against the raw label measures
+    an impossible target and makes a working tokenizer look broken.
+
+    Concretely, on ButtonUnmask this changed the multimodal reading from 38.0% to
+    53.9% of label entropy, and flipped the conclusion from "vision does not help
+    here" to "vision adds 5.4 points".
+
+    The object binding is not lost — supplying it is precisely the memory log's job.
+    Event tokens carry *observable* events; which cube went under which container is
+    recovered from earlier entries in the log.
+    """
+    return _OBJECT.sub("<obj>", canonical_label(label)).strip()
+
+
 def event_counts(segments: list[Segment]) -> dict[str, int]:
     """How many times each canonical event occurs — per-event count ground truth.
 

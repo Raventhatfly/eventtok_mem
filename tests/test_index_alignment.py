@@ -98,3 +98,24 @@ def test_ordinal_canonicalisation() -> None:
     assert (sg.ordinal(a), sg.ordinal(b)) == (1, 2)
     assert sg.ordinal("press the button") is None
     assert sg.canonical_label("press the button") == "press the button"
+
+
+def test_observable_label_collapses_object_identity() -> None:
+    """Object identity must be collapsed before scoring per-transition codes.
+
+    On occlusion tasks the named object is hidden at the moment of the action and
+    varies only across episodes, so no code computed from one transition can carry
+    it. Scoring against the raw label measures an impossible target -- it read
+    38.0% instead of 53.9% on ButtonUnmask and inverted the conclusion about
+    whether vision helps.
+    """
+    red = "pick up the container that hides the red cube"
+    green = "pick up the container that hides the green cube"
+    assert sg.observable_label(red) == sg.observable_label(green)
+    assert "<obj>" in sg.observable_label(red)
+    # Distinct actions must stay distinct.
+    assert sg.observable_label(red) != sg.observable_label("press the button")
+    # And the ordinal stripping still composes with it.
+    a = "move to the top of the right-side target for the first time"
+    b = "move to the top of the right-side target for the second time"
+    assert sg.observable_label(a) == sg.observable_label(b)

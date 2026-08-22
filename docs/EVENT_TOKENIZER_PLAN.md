@@ -293,6 +293,56 @@ over-merging — the first thing to sweep on GPU.
 
 ---
 
+## 4f. Multimodality, measured (2026-08-21)
+
+The tokenizer had drifted into being **OAT with different hyperparameters** —
+FSQ over action chunks, register encoder, reconstruction loss, no vision. That
+drift came from validating only on SwingXtimes, whose events *are* motions, so
+vision looked redundant. Two tasks and a metric fix settle it.
+
+### The metric was wrong first
+
+RoboMME's subgoals name the object: *"pick up the container that hides the red
+cube."* On occlusion tasks that object is **hidden by the container** at pick
+time, and the colour varies only across episodes (ButtonUnmask: red 0.50/ep,
+green 0.30, blue 0.45, at most one pick each). **No code computed from a single
+transition can carry it.** Scoring against the raw label measures an impossible
+target.
+
+`subgoals.observable_label()` collapses object identity to `<obj>`. On
+ButtonUnmask this moved the multimodal reading from 38.0% to 53.9% and *inverted*
+the conclusion about whether vision helps. The binding is not lost — supplying it
+is exactly the memory log's job. **Event tokens carry observable events; which
+cube went under which container comes from earlier entries in the log.** That
+division of labour is worth stating in the paper.
+
+### With the fair metric, multimodal wins on both tasks
+
+MI as a fraction of observable-label entropy, k-means K=32, 40 episodes:
+
+| input | ButtonUnmask | SwingXtimes |
+|---|---|---|
+| action only (**= OAT's input**) | 48.5 % | 74.3 % |
+| vision only | 45.2 % | 47.2 % |
+| **action + vision** | **53.9 %** | **81.4 %** |
+
++5.4 and +7.1 points over action-only. **This is the measured answer to "how is
+this different from OAT": OAT is action-only.** Vision adds consistently, on both
+a motion-defined task and a world-defined one.
+
+Note vision alone is the *weaker* single modality on both tasks, so the gain is
+genuinely from the combination rather than from vision carrying everything.
+
+### Method note
+
+Validate on at least two tasks with different structure from M1 onward. Every
+design decision that had to be undone — 512 codes, no vision, code-change
+boundaries — traces to a SwingXtimes-only measurement. One task cannot tell a
+general mechanism from a coincidence of that task's structure.
+
+
+---
+
 ## 5. Experiments
 
 **E1 — does a memory string change behaviour at all? (week 1, before building)**
