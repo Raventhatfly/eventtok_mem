@@ -71,7 +71,7 @@ def main() -> None:
     ap.add_argument("--pattern", default=None)
     args = ap.parse_args()
 
-    pattern = args.pattern or str(paths.CACHE_ROOT / "eval" / "alltasks_*.json")
+    pattern = args.pattern or str(paths.CACHE_ROOT / "eval" / "alltasks_k16_*.json")
     rows = []
     for path in sorted(glob.glob(pattern)):
         with open(path) as fh:

@@ -134,22 +134,47 @@ class TaskMeta:
         lo, hi = self._rows[epis_idx]
         return self.actions[lo:hi]
 
+    # A dimension whose std is below this carries no signal on this task. Dividing
+    # by it does not normalise it, it amplifies whatever numerical dust is left.
+    DEAD_STD = 1e-2
+
     @property
     def action_scale(self) -> np.ndarray:
-        """Per-dimension std of the delta action chunks.
+        """Per-dimension std of the delta action chunks; ``inf`` for dead dimensions.
 
-        The gripper dimension has std ~0.95 while the seven pose dimensions sit
-        at 0.05-0.20, so an unnormalised L1 is effectively a gripper predictor
-        and the pose information is invisible to the loss. Computed once over a
-        subsample and cached on the instance.
+        Two failure modes, opposite directions, same channel.
+
+        On grasping tasks the gripper has std ~0.95 against 0.05-0.20 for the seven
+        pose dimensions, so an unnormalised L1 is a gripper predictor and the pose
+        information is invisible. That is what the division fixes.
+
+        On tasks with **no grasping** -- PatternLock and RouteStick -- the gripper
+        never actuates, its std is ~0, and the old ``np.maximum(scale, 1e-3)`` floor
+        turned the division into a 1000x amplifier of a constant channel. Measured:
+        max |normalised action| was 1000 on those two tasks against 8-12 elsewhere,
+        the L1 loss was dominated ~1000:1 by a channel carrying nothing, and the
+        learned tokenizer collapsed to 1 of 64 codes on both -- the only two
+        collapses in 15 tasks. k-means divides by the same scale, so its numbers on
+        those tasks were computed on amplified dust too.
+
+        Dead dimensions therefore get ``inf``, so ``chunk / scale`` sends them to
+        exactly 0.0 and they contribute nothing to either the loss or a Euclidean
+        distance. A constant channel *should* contribute nothing; the old floor made
+        it contribute everything.
         """
         if getattr(self, "_action_scale", None) is None:
             rows = np.linspace(0, len(self.actions) - 1, num=min(4096, len(self.actions)))
             rows = np.unique(rows.astype(np.int64))
             chunks = np.stack([self.delta_actions(int(r)) for r in rows])
             scale = chunks.reshape(-1, chunks.shape[-1]).std(axis=0)
-            self._action_scale = np.maximum(scale, 1e-3).astype(np.float32)
+            scale = np.where(scale < self.DEAD_STD, np.inf, scale)
+            self._action_scale = scale.astype(np.float32)
         return self._action_scale
+
+    @property
+    def dead_action_dims(self) -> np.ndarray:
+        """Indices of action dimensions that are constant on this task."""
+        return np.flatnonzero(~np.isfinite(self.action_scale))
 
     def delta_actions(self, row: int) -> np.ndarray:
         """Action chunk with the current state removed from the first 7 dims.

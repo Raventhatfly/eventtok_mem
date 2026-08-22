@@ -36,5 +36,5 @@ TASK=${TASKS[${SLURM_ARRAY_TASK_ID:-0}]}
 
 echo "=== $(date -Is) analyze ${TASK} k=${K} ==="
 "${PY}" -m eventtok.scripts.analyze_task --task "${TASK}" --k "${K}" \
-    --out "${CACHE}/eval/alltasks_${TASK}.json"
+    --out "${CACHE}/eval/alltasks_k${K}_${TASK}.json"
 echo "=== $(date -Is) done ${TASK} ==="

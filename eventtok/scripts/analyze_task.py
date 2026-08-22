@@ -58,6 +58,12 @@ def main() -> None:
     ap.add_argument("--tolerance", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-vision", action="store_true")
+    ap.add_argument("--ckpt", default=None,
+                    help="evaluate a trained EventTokenizer instead of k-means. The "
+                         "split, the labels and every metric are identical, so the "
+                         "rows are directly comparable.")
+    ap.add_argument("--variant", default=None,
+                    help="label for this row; defaults to kmeans-k<K> or neural-<tag>")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -140,15 +146,53 @@ def main() -> None:
         conditions["vision"] = ["vision"]
         conditions["action+vision"] = ["action", "vision"]
 
+    neural_streams = None
+    if args.ckpt:
+        # One condition only: whatever the checkpoint was trained on. Its codes go
+        # through exactly the metrics k-means codes do -- same split, same labels,
+        # same BPE settings -- so the two rows can be read against each other.
+        import torch
+
+        from ..data.robomme import TransitionDataset
+        from .tokenize_episodes import load_model, stream_for_episode
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model, cfg = load_model(args.ckpt, device)
+        ds = TransitionDataset(
+            args.task, k=cfg["k"], scale=cfg["scale"], episodes=eps, index=index
+        )
+        neural_streams = {}
+        for ep in eps:
+            c, _, _ = stream_for_episode(model, ds, ep.epis_idx, device)
+            neural_streams[ep.epis_idx] = c
+        row["codebook_size"] = int(model.codebook_size)
+        row["neural_levels"] = list(cfg["levels"])
+        row["neural_use_vision"] = bool(cfg.get("use_vision", False))
+        row["live_codes"] = len({x for v in neural_streams.values() for x in v})
+        conditions = {"neural": ["action"]}
+        print(
+            f"  neural ckpt: levels={cfg['levels']} |C|={model.codebook_size} "
+            f"use_vision={cfg.get('use_vision', False)} "
+            f"live={row['live_codes']}/{model.codebook_size}",
+            flush=True,
+        )
+
     for name, parts in conditions.items():
-        X = np.concatenate([fitted[p].transform(blocks_raw[p]) for p in parts], axis=1)
-        codes, _ = kmeans_fit_predict(X[train_mask], X, args.k, args.seed)
+        if neural_streams is not None:
+            streams = neural_streams
+        else:
+            X = np.concatenate(
+                [fitted[p].transform(blocks_raw[p]) for p in parts], axis=1
+            )
+            codes, _ = kmeans_fit_predict(X[train_mask], X, args.k, args.seed)
 
         all_c, all_l, all_t = [], [], []
-        streams = {}
+        if neural_streams is None:
+            streams = {}
         for ep in eps:
             lo, hi = meta.rows(ep.epis_idx)
-            streams[ep.epis_idx] = codes[lo:hi].tolist()
+            if neural_streams is None:
+                streams[ep.epis_idx] = codes[lo:hi].tolist()
             c, l = label_mutual_information(streams[ep.epis_idx], ep, meta)
             all_c.extend(c)
             all_l.extend(l)
@@ -157,7 +201,7 @@ def main() -> None:
         row[f"label_acc_{name}"] = acc
         row["label_majority_heldout"] = maj
 
-        if name == "action":
+        if name in ("action", "neural"):
             corpus = [
                 [r.symbol for r in runs_with_spans(streams[ep.epis_idx], args.min_span)]
                 for ep in train_eps
@@ -206,7 +250,15 @@ def main() -> None:
             flush=True,
         )
 
-    out = args.out or str(paths.CACHE_ROOT / "eval" / f"alltasks_{args.task}.json")
+    row["variant"] = args.variant or (
+        f"neural-{'av' if row.get('neural_use_vision') else 'a'}"
+        if args.ckpt else f"kmeans-k{args.k}"
+    )
+    default_name = (
+        f"alltasks_{args.task}.json" if not args.ckpt
+        else f"neural_{args.task}_{row['variant']}.json"
+    )
+    out = args.out or str(paths.CACHE_ROOT / "eval" / default_name)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as fh:
         json.dump(row, fh, indent=2)
