@@ -133,8 +133,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", default="SwingXtimes")
     ap.add_argument("--encoders", nargs="+", default=["siglip", "dinov2l"])
-    ap.add_argument("--cameras", nargs="+", default=["image"],
-                    help="wrist_image is available for the dinov2* encoders only")
+    ap.add_argument(
+        "--cameras",
+        nargs="+",
+        default=["image"],
+        help="A wrist row and a base row differ in camera as well as encoder, so "
+        "do not read across them as an encoder comparison. siglip+wrist needs "
+        "scripts/encode_siglip_wrist.py to have been run first.",
+    )
     ap.add_argument("--k", type=int, default=32)
     ap.add_argument("--horizon", type=int, default=20)
     ap.add_argument("--pca", type=int, default=64)
@@ -178,18 +184,19 @@ def main() -> None:
     # --- raw blocks -------------------------------------------------------
     raw: dict[str, np.ndarray] = {"action": action_matrix(meta, rows)}
     for enc in args.encoders:
-        if enc == "siglip":
-            getter = repack.EpisodeFeatures(args.task, args.scale)
-            raw["siglip"] = vision_matrix(
+        for cam in args.cameras:
+            key = enc if cam == "image" else f"{enc}_wrist"
+            if enc == "siglip" and cam == "image":
+                # The shipped RoboMME cache, built with num_views=1 over the
+                # third-person camera. Everything else comes from a cache this
+                # repo wrote, including SigLIP's wrist features -- see
+                # scripts/encode_siglip_wrist.py for why that row has to exist.
+                getter = repack.EpisodeFeatures(args.task, args.scale)
+            else:
+                getter = dino.EpisodeDinoFeatures(args.task, enc, args.scale, cam)
+            raw[key] = vision_matrix(
                 getter, epis_of_row, frame_of_row, args.horizon, args.vision_form
             )
-        else:
-            for cam in args.cameras:
-                key = enc if cam == "image" else f"{enc}_wrist"
-                getter = dino.EpisodeDinoFeatures(args.task, enc, args.scale, cam)
-                raw[key] = vision_matrix(
-                    getter, epis_of_row, frame_of_row, args.horizon, args.vision_form
-                )
     for name, X in raw.items():
         print(f"  block {name:16s} {X.shape}", flush=True)
 

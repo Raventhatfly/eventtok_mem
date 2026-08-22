@@ -9,8 +9,17 @@ event vocabulary sits near 0%. A fine-grained trajectory code sits high, and the
 **Always report a baseline on the same line.** Four numbers in this project were
 misread for want of one: max-token counting (48% vs 31-37% chance, i.e. nothing),
 a circular n-gram metric (chose the gram by the answer), counting with no chance
-baseline at all, and MI/H read as an accuracy (53.9% MI is 80.5% accuracy against
-a 49.6% majority). Use :func:`label_accuracy`, which returns its own baseline.
+baseline at all, and MI/H read as an accuracy (53.9% MI was 80.5% accuracy against
+a 49.6% majority; that ButtonUnmask figure later moved to 85.9% once the features
+were centred, so treat it as an illustration of the conversion, not a current
+result). Use :func:`label_accuracy`, which returns its own baseline.
+
+A fifth failure had nothing to do with baselines and is worth knowing about here
+because it also inverted a conclusion: clustering **uncentred** features. The shared
+mean is 99.8% of SigLIP's feature energy and 94.9% of DINOv2's, so Euclidean
+k-means on raw features mostly measures a constant, and vision looked like the
+weaker modality when it is the stronger one on ButtonUnmask. Whatever produces the
+code streams passed in here, check that its inputs were centred.
 
 **Recoverability** — whether a recurring n-gram occurs exactly N times, where N is
 the episode's target repetition count. This can hold even when stability fails,
