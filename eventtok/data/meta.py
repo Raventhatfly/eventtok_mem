@@ -154,8 +154,14 @@ class TaskMeta:
         max |normalised action| was 1000 on those two tasks against 8-12 elsewhere,
         the L1 loss was dominated ~1000:1 by a channel carrying nothing, and the
         learned tokenizer collapsed to 1 of 64 codes on both -- the only two
-        collapses in 15 tasks. k-means divides by the same scale, so its numbers on
-        those tasks were computed on amplified dust too.
+        collapses in 15 tasks. k-means divides by the same scale but is **not**
+        affected, which is worth stating because the opposite was assumed at first:
+        the channel is exactly constant -- std 0.0, one unique value -- so the floor
+        turned it into a constant -1000, and a constant coordinate shifts every point
+        identically, leaving Euclidean distances and the clustering unchanged. The
+        k-means rows for both tasks come out identical before and after this fix.
+        Only an L1 reconstruction target of that size does damage, which is why the
+        learned tokenizer was the only thing that collapsed.
 
         Dead dimensions therefore get ``inf``, so ``chunk / scale`` sends them to
         exactly 0.0 and they contribute nothing to either the loss or a Euclidean
