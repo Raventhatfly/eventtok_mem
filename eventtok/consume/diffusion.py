@@ -17,12 +17,23 @@ pooled variant is kept as a control rather than discarded:
 
     cond="crossattn"   observation and log tokens stay a sequence; the action tokens
                        attend to them. Order and multiplicity survive.
-    cond="global"      everything is mean-pooled into one vector added to every action
-                       token -- the standard DP recipe, and the one the plan predicts
-                       will lose the count.
+    cond="global"      everything is mean-pooled into one vector -- the standard DP
+                       recipe, and the one the plan predicts will lose the count.
 
 Running both is the point. "Pooling destroys the count" is a claim this project has
-asserted and never tested, and the two modes differ in exactly that respect.
+asserted and never tested.
+
+**Read the two modes only within themselves, never across.** ``global`` pools the
+*vision* tokens as well as the log, so it is handicapped before any memory is involved:
+measured on ButtonUnmask, ``none|global`` is 0.6056 against ``none|crossattn`` 0.5235,
+a 15.7% penalty with no memory present at all. Comparing ``log|crossattn`` directly
+against ``log|global`` therefore conflates pooling the log with pooling the
+observation, and answers neither question.
+
+The valid contrast is the *relative* benefit of memory inside each mode -- log against
+that mode's own none. If memory buys less under pooling than under cross-attention,
+that is evidence about pooling the log specifically, with the observation handicap
+divided out by the shared baseline.
 """
 
 from __future__ import annotations

@@ -205,13 +205,30 @@ def main() -> None:
             print(f"      memory does not help here; content share undefined")
 
     if len(args.cond) > 1 and all(f"log|{c}" in results for c in args.cond):
-        a, b = results["log|crossattn"]["sampled_l1"], results["log|global"]["sampled_l1"]
-        print(f"\n  crossattn vs pooled global_cond, with the log: {a - b:+.4f} "
-              f"({(a / b - 1):+.1%})")
-        print("  " + ("keeping the log a sequence beats pooling it, which is what the "
-                      "plan predicted" if a < b else
-                      "pooling is no worse here, so the plan's objection to global_cond "
-                      "is not supported on this task"))
+        # Only the *relative* benefit is comparable across modes. `global` pools the
+        # vision tokens too, so it starts handicapped; the shared none baseline inside
+        # each mode divides that handicap out.
+        rel = {}
+        for c in args.cond:
+            nb = results.get(f"none|{c}", {}).get("sampled_l1")
+            lg = results.get(f"log|{c}", {}).get("sampled_l1")
+            if nb and lg:
+                rel[c] = lg / nb - 1
+        print("\n  benefit of the log within each conditioning mode "
+              "(the only cross-mode-comparable quantity):")
+        for c, v in rel.items():
+            print(f"    {c:10s} {v:+.1%}")
+        if {"crossattn", "global"} <= set(rel):
+            handicap = (results["none|global"]["sampled_l1"]
+                        / results["none|crossattn"]["sampled_l1"] - 1)
+            print(f"    pooling handicaps the *observation* by {handicap:+.1%} before "
+                  f"any memory, so raw log|global vs log|crossattn is not the test")
+            if rel["crossattn"] < rel["global"]:
+                print("    memory buys MORE when the log stays a sequence -- the plan's "
+                      "objection to global_cond holds")
+            else:
+                print("    memory buys at least as much pooled -- the plan's objection "
+                      "to global_cond is NOT supported on this task")
 
     out = args.out or str(paths.CACHE_ROOT / "eval" / f"dp_{args.task}.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
