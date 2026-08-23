@@ -254,10 +254,26 @@ def main() -> None:
                           f"    memory being present than on what it says, which is the "
                           f"plan's objection to global_cond")
                 else:
-                    print("    pooling does not reduce content dependence here; the "
-                          "plan's objection is not supported on this task")
+                    print("    pooling does not reduce content dependence here")
 
-    out = args.out or str(paths.CACHE_ROOT / "eval" / f"dp_{args.task}.json")
+        # The verdict. Absolute performance and content share are both clean; the
+        # relative benefit is not, because pooling handicaps the observation by
+        # 15-30% and the pooled model then recovers more of a hole it dug itself.
+        # Judged on relative benefit this printed "the plan's objection is NOT
+        # supported" while every clean metric said the opposite.
+        ca = results.get("log|crossattn", {}).get("sampled_l1")
+        gl = results.get("log|global", {}).get("sampled_l1")
+        if ca and gl:
+            print(f"\n  absolute sampled L1 with the log: crossattn {ca:.4f} vs "
+                  f"pooled {gl:.4f} -> {'crossattn' if ca < gl else 'pooled'} wins")
+            nb_c = results.get("none|crossattn", {}).get("sampled_l1")
+            nb_g = results.get("none|global", {}).get("sampled_l1")
+            ben_g = (nb_g - gl) / nb_g if nb_g else None
+            if ben_g is not None and ben_g < 0.03:
+                print(f"    pooling collapses the benefit itself "
+                      f"({(nb_c - ca) / nb_c:+.1%} -> {ben_g:+.1%})")
+
+        out = args.out or str(paths.CACHE_ROOT / "eval" / f"dp_{args.task}.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as fh:
         json.dump({"task": args.task, "reference_mean_L1": ref_mean,
