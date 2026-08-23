@@ -228,22 +228,25 @@ def main() -> None:
         # The content share is the test. It is a ratio computed inside one mode, so the
         # observation handicap and the headroom it creates both cancel. It asks: of
         # whatever memory buys here, how much depends on the log being *correct*?
+        # The share is benefit-normalised, so a tiny benefit makes it explode. Any
+        # threshold has an edge case -- SwingXtimes pooled gains 2.05% of baseline and
+        # slid past a 2% floor to print 214% -- so the benefit is printed *next to*
+        # the share instead, and a share resting on a negligible benefit is labelled.
         share = {}
         for c in args.cond:
             nb = results.get(f"none|{c}", {}).get("sampled_l1")
             lg = results.get(f"log|{c}", {}).get("sampled_l1")
             wr = results.get(f"wrong|{c}", {}).get("sampled_l1")
-            # The share needs a benefit big enough to divide by. An absolute floor
-            # is not enough: SwingXtimes pooled gains only 0.0098 (0.4777 -> 0.4679)
-            # and the ratio read 212%, which says nothing except that the denominator
-            # was tiny. Require the benefit to be at least 2% of the baseline.
-            if nb and lg and wr and (nb - lg) > 0.02 * nb:
-                share[c] = (wr - lg) / (nb - lg)
+            if nb and lg and wr and nb - lg > 1e-9:
+                share[c] = ((wr - lg) / (nb - lg), (nb - lg) / nb)
         if share:
             print("\n  content share by mode -- how much of the benefit needs the log "
-                  "to be RIGHT:")
-            for c, v in share.items():
-                print(f"    {c:10s} {v:.0%}")
+                  "to be RIGHT,\n  shown with the benefit it is a share OF:")
+            for c, (v, mag) in share.items():
+                note = "   <- benefit is negligible; the share is not meaningful" \
+                    if mag < 0.03 else ""
+                print(f"    {c:10s} {v:>6.0%}  of a {mag:+.1%} benefit{note}")
+            share = {c: v for c, (v, mag) in share.items() if mag >= 0.03}
             if {"crossattn", "global"} <= set(share):
                 if share["global"] < share["crossattn"]:
                     print(f"    pooling costs {share['crossattn'] - share['global']:.0%} "
