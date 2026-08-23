@@ -160,8 +160,16 @@ class DiffusionPolicy(nn.Module):
 
     @torch.no_grad()
     def sample(self, feat, state, log_tokens=None, log_len=None, counts=None,
-               steps: int = 20):
-        """DDIM, deterministic (eta=0), so the comparison is not sampling noise."""
+               steps: int = 20, clip: float = 1.0):
+        """DDIM, deterministic (eta=0), so the comparison is not sampling noise.
+
+        ``x0`` is clipped every step, and that is not cosmetic. At the first step
+        ``alphas_cum`` is 2.4e-7, so ``x0 = (x - sqrt(1-a) eps) / sqrt(a)`` multiplies
+        any error in the predicted noise by about 2000x. Without the clip this produced
+        sampled L1 of 83-137 against a predict-the-mean reference of 0.60 -- garbage,
+        not a weak policy. Diffusion Policy normalises actions to [-1, 1] precisely so
+        that this clip is principled, and the caller is expected to do the same.
+        """
         b = feat.shape[0]
         x = torch.randn(b, self.k, self.action_dim, device=feat.device)
         ts = torch.linspace(self.n_steps - 1, 0, steps).long().to(feat.device)
@@ -169,9 +177,11 @@ class DiffusionPolicy(nn.Module):
             tb = t.expand(b)
             eps = self(x, tb, feat, state, log_tokens, log_len, counts)
             a = self.alphas_cum[t]
-            x0 = (x - (1 - a).sqrt() * eps) / a.sqrt()
+            x0 = ((x - (1 - a).sqrt() * eps) / a.sqrt()).clamp(-clip, clip)
             if i + 1 < len(ts):
                 a_next = self.alphas_cum[ts[i + 1]]
+                # Recompute eps from the clipped x0 so the step stays self-consistent.
+                eps = (x - a.sqrt() * x0) / (1 - a).sqrt()
                 x = a_next.sqrt() * x0 + (1 - a_next).sqrt() * eps
             else:
                 x = x0

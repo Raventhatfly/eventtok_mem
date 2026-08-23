@@ -98,6 +98,25 @@ def main() -> None:
                   for e, f in zip(epis_all, frame_all)])
     S = meta.state[row_all].astype(np.float32)
     ref_mean = float(np.abs(Y[~is_train] - Y[is_train].mean(0, keepdims=True)).mean())
+
+    # Diffusion Policy normalises actions to [-1, 1] from train min/max, which is what
+    # makes clipping x0 during sampling principled rather than arbitrary. Skipping this
+    # is what produced sampled L1 of 83-137 against a 0.60 reference.
+    tr_mask = is_train
+    a_lo = Y[tr_mask].reshape(-1, Y.shape[-1]).min(0)
+    a_hi = Y[tr_mask].reshape(-1, Y.shape[-1]).max(0)
+    span = np.maximum(a_hi - a_lo, 1e-6)
+    Yn = (2.0 * (Y - a_lo) / span - 1.0).astype(np.float32)
+    # Held-out actions can fall outside the train range; clip so the target is
+    # representable, and report how often that bites.
+    outside = float((np.abs(Yn) > 1.0).mean())
+    Yn = np.clip(Yn, -1.0, 1.0)
+    print(f"  actions normalised to [-1,1] from train min/max; "
+          f"{outside:.2%} of values fell outside the train range", flush=True)
+
+    def to_std_units(x: np.ndarray) -> np.ndarray:
+        """Back to the per-dimension-std units the BC probe reports, for comparability."""
+        return (x + 1.0) / 2.0 * span + a_lo
     print(f"{args.task}: {len(samples)} transitions, vocab {vocab.size}, "
           f"mean log {np.mean([len(v) for v in logs.values()]):.1f} tokens, "
           f"reference L1 (train mean) {ref_mean:.4f}", flush=True)
@@ -145,7 +164,7 @@ def main() -> None:
                 perm = rng.permutation(tr)
                 for b in range(0, len(perm), args.batch):
                     idx = perm[b : b + args.batch]
-                    loss = model.loss(tt(Y, idx), tt(V, idx), tt(S, idx),
+                    loss = model.loss(tt(Yn, idx), tt(V, idx), tt(S, idx),
                                       tt(toks, idx), tt(lens, idx), tt(counts, idx))
                     opt.zero_grad(set_to_none=True)
                     loss.backward()
@@ -158,10 +177,11 @@ def main() -> None:
                 idx = te[b : b + 512]
                 pred = model.sample(tt(V, idx), tt(S, idx), tt(toks, idx),
                                     tt(lens, idx), tt(counts, idx),
-                                    steps=args.sample_steps)
-                errs[b : b + len(idx)] = (
-                    (pred - tt(Y, idx)).abs().mean(dim=(1, 2)).cpu().numpy()
-                )
+                                    steps=args.sample_steps).cpu().numpy()
+                # Compare in std units so these numbers sit next to the BC probe's.
+                errs[b : b + len(idx)] = np.abs(
+                    to_std_units(pred) - to_std_units(Yn[idx])
+                ).mean(axis=(1, 2))
             results[key] = {"sampled_l1": float(errs.mean()),
                             "final_denoise_loss": float(loss.item())}
             print(f"  {key:22s} sampled L1 {errs.mean():.4f}", flush=True)

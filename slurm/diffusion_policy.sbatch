@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --mem=128G
-#SBATCH --time=0-08:00:00
+#SBATCH --time=0-12:00:00
 #SBATCH --requeue
 #SBATCH --open-mode=append
 #SBATCH --output=/n/netscratch/ydu_lab/Lab/wfy/eventtok_cache/slurm/%x-%A_%a.out
@@ -39,7 +39,7 @@ cd "${REPO}"
 
 TASKS=(PickXtimes SwingXtimes ButtonUnmask VideoRepick)
 TASK=${TASKS[${SLURM_ARRAY_TASK_ID:-0}]}
-EPOCHS=${EPOCHS:-30}
+EPOCHS=${EPOCHS:-150}
 
 echo "=== $(date -Is) diffusion policy ${TASK} epochs=${EPOCHS} ==="
 nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || true
