@@ -214,21 +214,41 @@ def main() -> None:
             lg = results.get(f"log|{c}", {}).get("sampled_l1")
             if nb and lg:
                 rel[c] = lg / nb - 1
-        print("\n  benefit of the log within each conditioning mode "
-              "(the only cross-mode-comparable quantity):")
+        print("\n  benefit of the log within each conditioning mode:")
         for c, v in rel.items():
             print(f"    {c:10s} {v:+.1%}")
         if {"crossattn", "global"} <= set(rel):
             handicap = (results["none|global"]["sampled_l1"]
                         / results["none|crossattn"]["sampled_l1"] - 1)
             print(f"    pooling handicaps the *observation* by {handicap:+.1%} before "
-                  f"any memory, so raw log|global vs log|crossattn is not the test")
-            if rel["crossattn"] < rel["global"]:
-                print("    memory buys MORE when the log stays a sequence -- the plan's "
-                      "objection to global_cond holds")
-            else:
-                print("    memory buys at least as much pooled -- the plan's objection "
-                      "to global_cond is NOT supported on this task")
+                  f"any memory, so neither the raw numbers nor the relative benefit\n"
+                  f"    settles the question -- the pooled model has more headroom to "
+                  f"recover.")
+
+        # The content share is the test. It is a ratio computed inside one mode, so the
+        # observation handicap and the headroom it creates both cancel. It asks: of
+        # whatever memory buys here, how much depends on the log being *correct*?
+        share = {}
+        for c in args.cond:
+            nb = results.get(f"none|{c}", {}).get("sampled_l1")
+            lg = results.get(f"log|{c}", {}).get("sampled_l1")
+            wr = results.get(f"wrong|{c}", {}).get("sampled_l1")
+            if nb and lg and wr and nb - lg > 1e-4:
+                share[c] = (wr - lg) / (nb - lg)
+        if share:
+            print("\n  content share by mode -- how much of the benefit needs the log "
+                  "to be RIGHT:")
+            for c, v in share.items():
+                print(f"    {c:10s} {v:.0%}")
+            if {"crossattn", "global"} <= set(share):
+                if share["global"] < share["crossattn"]:
+                    print(f"    pooling costs {share['crossattn'] - share['global']:.0%} "
+                          f"of the content dependence: the pooled policy leans more on\n"
+                          f"    memory being present than on what it says, which is the "
+                          f"plan's objection to global_cond")
+                else:
+                    print("    pooling does not reduce content dependence here; the "
+                          "plan's objection is not supported on this task")
 
     out = args.out or str(paths.CACHE_ROOT / "eval" / f"dp_{args.task}.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
