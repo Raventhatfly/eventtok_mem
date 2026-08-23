@@ -233,7 +233,11 @@ def main() -> None:
             nb = results.get(f"none|{c}", {}).get("sampled_l1")
             lg = results.get(f"log|{c}", {}).get("sampled_l1")
             wr = results.get(f"wrong|{c}", {}).get("sampled_l1")
-            if nb and lg and wr and nb - lg > 1e-4:
+            # The share needs a benefit big enough to divide by. An absolute floor
+            # is not enough: SwingXtimes pooled gains only 0.0098 (0.4777 -> 0.4679)
+            # and the ratio read 212%, which says nothing except that the denominator
+            # was tiny. Require the benefit to be at least 2% of the baseline.
+            if nb and lg and wr and (nb - lg) > 0.02 * nb:
                 share[c] = (wr - lg) / (nb - lg)
         if share:
             print("\n  content share by mode -- how much of the benefit needs the log "

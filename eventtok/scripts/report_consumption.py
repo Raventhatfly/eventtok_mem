@@ -61,7 +61,9 @@ def main() -> None:
         # Shares are undefined when memory does not help -- the denominator is zero or
         # negative and the ratio explodes rather than degrading. Tasks where the log
         # hurts are reported as such instead of with a fabricated percentage.
-        usable = benefit > 1e-4
+        # 2% of the baseline, not an absolute floor: a tiny positive benefit makes
+        # the share explode just as a negative one does, and reads as a strong result.
+        usable = benefit > 0.02 * base
 
         def share(c):
             if c not in res or not usable:

@@ -215,7 +215,7 @@ def main() -> None:
         gap = results["wrong"]["l1"] - results["log"]["l1"]
         benefit = results["none"]["l1"] - results["log"]["l1"] if "none" in results else None
         print()
-        if benefit is not None and benefit <= 1e-4:
+        if benefit is not None and benefit <= 0.02 * results["none"]["l1"]:
             # The share is undefined when memory does not help: the denominator is
             # zero or negative and the ratio explodes. Printing it produced
             # "3596907854% of the total benefit", which is worse than saying nothing.
