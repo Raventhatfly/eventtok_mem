@@ -17,6 +17,25 @@ The comparison here is BPE tokens **against the run symbols they were built from
 on the same episodes with the same tolerance. That isolates what BPE contributes,
 which comparing against the per-transition stream would not: run-length encoding
 alone already removes most of the boundaries.
+
+**Read this metric narrowly.** It scores agreement with RoboMME's human annotation
+convention, and the policy never sees that convention. A token stream that cuts every
+event into two or three pieces is not thereby broken: the robot is not told "swing
+three times", it learns the mapping from demonstrations, so a repeated *sub-event*
+signature is as usable as a one-token-per-event segmentation. Low boundary F1 means
+"these cuts are not where a human would put them", not "this log is unusable".
+
+The evidence says the narrow reading is the right one. Counting does not use the total
+token count at all -- it keys on one recurring pattern, ``(4,2,4)`` on PickXtimes --
+and reaches 96% on repetition counts never seen in training while boundary F1 on that
+task is 0.218. And the consumption probe (``eventtok/consume/probe.py``) improves
+action prediction from the raw token sequence with no names and no segmentation
+guarantee, with a wrong log worth essentially nothing.
+
+Measured for context: tokens per annotated event runs 0.9-3.7 across the 16 tasks with
+a coefficient of variation of 0.25-0.76, so total multiplicity is *not* tightly
+consistent. What holds is the weaker and sufficient property -- a specific pattern
+recurs once per repetition.
 """
 
 from __future__ import annotations
