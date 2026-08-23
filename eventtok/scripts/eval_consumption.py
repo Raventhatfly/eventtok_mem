@@ -213,17 +213,24 @@ def main() -> None:
 
     if "log" in results and "wrong" in results:
         gap = results["wrong"]["l1"] - results["log"]["l1"]
-        rel = gap / max(results["none"]["l1"] - results["log"]["l1"], 1e-9) \
-            if "none" in results else float("nan")
+        benefit = results["none"]["l1"] - results["log"]["l1"] if "none" in results else None
         print()
-        if gap <= 0:
+        if benefit is not None and benefit <= 1e-4:
+            # The share is undefined when memory does not help: the denominator is
+            # zero or negative and the ratio explodes. Printing it produced
+            # "3596907854% of the total benefit", which is worse than saying nothing.
+            print(f"  Memory does NOT help on this task: log {results['log']['l1']:.4f} "
+                  f"against none {results['none']['l1']:.4f}. The content share is "
+                  f"undefined\n  (no benefit to apportion). A wrong log is still "
+                  f"{gap:+.4f} relative to the correct one.")
+        elif gap <= 0:
             print("  A WRONG log predicts at least as well as the correct one. The policy\n"
                   "  is not reading the memory content, and any transfer number built on\n"
                   "  this log would be measuring nothing.")
         else:
             print(f"  A wrong log is {gap:+.4f} worse than the correct one, i.e. "
-                  f"{rel:.0%} of the\n  total benefit of having memory at all. The content "
-                  f"is being read.")
+                  f"{gap / benefit:.0%} of the\n  total benefit of having memory at all. "
+                  f"The content is being read.")
 
     payload = {"task": args.task, "k": args.k, "vocab": vocab.size,
                "reference_mean_L1": ref_mean, "reference_zero_L1": ref_zero,
