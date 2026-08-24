@@ -43,7 +43,8 @@ import numpy as np
 import torch
 from torch import nn
 
-CONDITIONS = ("none", "log", "wrong", "shuffled", "count", "rawhist", "elapsed")
+CONDITIONS = ("none", "log", "wrong", "shuffled", "count", "rawhist", "elapsed",
+              "codes", "runs")
 
 
 class MemoryPolicy(nn.Module):
@@ -87,7 +88,7 @@ class MemoryPolicy(nn.Module):
                 nn.Linear(1, d_model), nn.GELU(), nn.Linear(d_model, d_model)
             )
             mem_dim = d_model
-        elif condition in ("log", "wrong", "shuffled"):
+        elif condition in ("log", "wrong", "shuffled", "codes", "runs"):
             self.tok_emb = nn.Embedding(vocab + 1, d_model)      # +1 = padding
             self.pos_emb = nn.Embedding(max_log, d_model)
             self.empty = nn.Parameter(torch.zeros(d_model))
@@ -127,7 +128,7 @@ class MemoryPolicy(nn.Module):
                 log_tokens=None, log_len=None, counts=None,
                 hist=None, elapsed=None) -> torch.Tensor:
         parts = [self.vis_in(feat).flatten(1), self.state_in(state)]
-        if self.condition in ("log", "wrong", "shuffled"):
+        if self.condition in ("log", "wrong", "shuffled", "codes", "runs"):
             parts.append(self.encode_memory(log_tokens, log_len))
         elif self.condition == "count":
             parts.append(self.count_in(counts))

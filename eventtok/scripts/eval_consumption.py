@@ -171,19 +171,33 @@ def main() -> None:
                 HIST[i, j] = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
         ELAPSED[i, 0] = t / max(ep_len[e], 1)
 
+    # Symbol space has to cover both BPE token ids and raw k-means codes, since the
+    # `codes` and `runs` rungs feed the latter through the same embedding.
+    SYMBOLS = max(vocab.size, args.k) + 1
+
     def memory_arrays(condition: str):
         toks = np.zeros((len(samples), args.max_log), dtype=np.int64)
         lens = np.zeros(len(samples), dtype=np.int64)
-        counts = np.zeros((len(samples), vocab.size), dtype=np.float32)
-        pad = vocab.size
+        counts = np.zeros((len(samples), SYMBOLS), dtype=np.float32)
+        pad = SYMBOLS
         toks[:] = pad
         for i, (e, t, _, _, _) in enumerate(samples):
             if condition == "wrong":
                 src, tt = other[e], t
             else:
                 src, tt = e, t
-            closed_at, tokens_at = logs[src]
-            p = tokens_at_time(closed_at, tokens_at, tt, args.max_log)
+            # The ladder. Each rung drops one stage of the pipeline, and all three are
+            # causal the same way: a chunk starting at u is only known at u+chunk.
+            if condition == "codes":
+                avail = max(tt - args.chunk, 0)
+                p = [int(c) for c in streams[src][:avail]][-args.max_log:]
+            elif condition == "runs":
+                avail = max(tt - args.chunk, 0)
+                p = [r.symbol for r in
+                     runs_with_spans(streams[src][:avail], args.min_span)][-args.max_log:]
+            else:
+                closed_at, tokens_at = logs[src]
+                p = tokens_at_time(closed_at, tokens_at, tt, args.max_log)
             if condition == "shuffled" and len(p) > 1:
                 p = list(rng.permutation(p))
             lens[i] = len(p)
@@ -200,10 +214,10 @@ def main() -> None:
             memory_arrays(cond) if cond != "none"
             else (np.zeros((len(samples), args.max_log), dtype=np.int64),
                   np.zeros(len(samples), dtype=np.int64),
-                  np.zeros((len(samples), vocab.size), dtype=np.float32))
+                  np.zeros((len(samples), SYMBOLS), dtype=np.float32))
         )
         model = MemoryPolicy(
-            vocab=vocab.size, d_feat=V.shape[-1], n_vis=V.shape[1],
+            vocab=SYMBOLS, d_feat=V.shape[-1], n_vis=V.shape[1],
             state_dim=S.shape[-1], action_dim=Y.shape[-1], k=args.chunk,
             d_model=args.d_model, max_log=args.max_log, condition=cond,
             hist_len=args.hist_len,
@@ -259,6 +273,9 @@ def main() -> None:
         return "n/a"
     for a, b, why in [
         ("log", "none", "does memory help at all"),
+        ("codes", "rawhist", "what QUANTISATION costs"),
+        ("runs", "codes", "what COLLAPSING REPEATS costs"),
+        ("log", "runs", "what BPE MERGING costs"),
         ("log", "wrong", "does the CONTENT matter"),
         ("log", "shuffled", "does order matter"),
         ("log", "count", "does the raw log beat counting"),
