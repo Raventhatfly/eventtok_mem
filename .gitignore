@@ -9,5 +9,6 @@ outputs/
 cache/
 *.npy
 *.npz
-# reference notes, not shipped
+# working notes stay local; the status doc is the record and ships
 docs/
+!docs/EVENT_TOKENIZER_PLAN.md
