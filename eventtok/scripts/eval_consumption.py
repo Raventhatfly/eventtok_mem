@@ -31,6 +31,7 @@ from ..data.index import RoboMMEIndex
 from ..data.meta import TaskMeta
 from ..eval.bpe_boundaries import runs_with_spans
 from ..models.kmeans import KMeansTokenizer
+from ..models.multimodal import MultimodalTokenizer
 
 
 def main() -> None:
@@ -43,6 +44,13 @@ def main() -> None:
     ap.add_argument("--vocab-size", type=int, default=256)
     ap.add_argument("--max-log", type=int, default=64)
     ap.add_argument("--max-token-length", type=int, default=4)
+    ap.add_argument("--tokens", default="action+vision",
+                    choices=["action", "action+vision"],
+                    help="what the EVENT TOKENS are built from. action is the "
+                         "OAT-shaped control; action+vision is the method.")
+    ap.add_argument("--vision-weight", type=float, default=1.0)
+    ap.add_argument("--hist-len", type=int, default=32,
+                    help="how many executed actions the rawhist control sees")
     ap.add_argument("--scale", default="2x2")
     ap.add_argument("--epochs", type=int, default=25)
     ap.add_argument("--batch", type=int, default=256)
@@ -69,8 +77,19 @@ def main() -> None:
     train_ids = {e.epis_idx for e in train_eps}
 
     # --- the event log, built exactly as the rest of the project builds it -----
-    km = KMeansTokenizer(args.k, seed=args.seed).fit(meta, train_eps)
-    streams = {e.epis_idx: km.stream_for_episode(meta, e) for e in eps}
+    # What the event tokens are built from. Action-only is OAT; the method uses
+    # action+vision, and this project has twice drifted back to the action-only path
+    # because it was the convenient one.
+    if args.tokens == "action":
+        km = KMeansTokenizer(args.k, seed=args.seed).fit(meta, train_eps)
+        streams = {e.epis_idx: km.stream_for_episode(meta, e) for e in eps}
+    else:
+        mm = MultimodalTokenizer(
+            n_clusters=args.k, horizon=args.chunk, vision_weight=args.vision_weight,
+            seed=args.seed,
+        ).fit(meta, train_eps, feats)
+        streams = mm.stream_for_episodes(meta, eps, feats)
+    print(f"  event tokens from: {args.tokens}", flush=True)
     corpus = [
         [r.symbol for r in runs_with_spans(streams[e.epis_idx], args.min_span)]
         for e in train_eps
@@ -134,6 +153,24 @@ def main() -> None:
         pool = [o for o in ep_ids if o != e]
         other[e] = pool[int(rng.integers(len(pool)))]
 
+    # rawhist: the last hist_len executed actions, normalised the same way the
+    # tokenizer normalises them. This is the buffer the event log summarises, fed
+    # straight in. elapsed: one scalar, how far into the episode we are.
+    ep_len = {}
+    for ep in eps:
+        lo, hi = meta.rows(ep.epis_idx)
+        ep_len[ep.epis_idx] = hi - lo
+    HIST = np.zeros((len(samples), args.hist_len, Y.shape[-1]), dtype=np.float32)
+    ELAPSED = np.zeros((len(samples), 1), dtype=np.float32)
+    for i, (e, t, row, _, _) in enumerate(samples):
+        lo, _ = meta.rows(e)
+        for j in range(args.hist_len):
+            src = t - args.hist_len + j
+            if src >= 0:
+                a = meta.actions[lo + src][0] / scale
+                HIST[i, j] = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+        ELAPSED[i, 0] = t / max(ep_len[e], 1)
+
     def memory_arrays(condition: str):
         toks = np.zeros((len(samples), args.max_log), dtype=np.int64)
         lens = np.zeros(len(samples), dtype=np.int64)
@@ -169,6 +206,7 @@ def main() -> None:
             vocab=vocab.size, d_feat=V.shape[-1], n_vis=V.shape[1],
             state_dim=S.shape[-1], action_dim=Y.shape[-1], k=args.chunk,
             d_model=args.d_model, max_log=args.max_log, condition=cond,
+            hist_len=args.hist_len,
         ).to(device)
         opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
@@ -182,7 +220,8 @@ def main() -> None:
             for b in range(0, len(perm), args.batch):
                 idx = perm[b : b + args.batch]
                 pred = model(tt(V, idx), tt(S, idx), tt(toks, idx),
-                             tt(lens, idx), tt(counts, idx))
+                             tt(lens, idx), tt(counts, idx),
+                             tt(HIST, idx), tt(ELAPSED, idx))
                 loss = nn.functional.l1_loss(pred, tt(Y, idx))
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
@@ -195,7 +234,8 @@ def main() -> None:
             for b in range(0, len(te), 1024):
                 idx = te[b : b + 1024]
                 pred = model(tt(V, idx), tt(S, idx), tt(toks, idx),
-                             tt(lens, idx), tt(counts, idx))
+                             tt(lens, idx), tt(counts, idx),
+                             tt(HIST, idx), tt(ELAPSED, idx))
                 errs[b : b + len(idx)] = (
                     (pred - tt(Y, idx)).abs().mean(dim=(1, 2)).cpu().numpy()
                 )
@@ -222,6 +262,8 @@ def main() -> None:
         ("log", "wrong", "does the CONTENT matter"),
         ("log", "shuffled", "does order matter"),
         ("log", "count", "does the raw log beat counting"),
+        ("log", "rawhist", "does the TOKENIZER beat raw executed actions"),
+        ("log", "elapsed", "is it more than knowing how far into the episode we are"),
     ]:
         print(f"    {a:5s} - {b:9s} {delta(a, b):>22s}   {why}")
 

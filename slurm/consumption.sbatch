@@ -37,7 +37,7 @@ export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
 mkdir -p "${CACHE}/slurm" "${CACHE}/eval" "${MPLCONFIGDIR}" "${TORCH_HOME}"
 cd "${REPO}"
 
-TASKS=(PickXtimes SwingXtimes ButtonUnmask VideoRepick)
+TASKS=(SwingXtimes VideoRepick PickXtimes ButtonUnmask)
 TASK=${TASKS[${SLURM_ARRAY_TASK_ID:-0}]}
 EPOCHS=${EPOCHS:-25}
 

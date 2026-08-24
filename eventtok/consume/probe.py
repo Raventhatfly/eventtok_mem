@@ -43,7 +43,7 @@ import numpy as np
 import torch
 from torch import nn
 
-CONDITIONS = ("none", "log", "wrong", "shuffled", "count")
+CONDITIONS = ("none", "log", "wrong", "shuffled", "count", "rawhist", "elapsed")
 
 
 class MemoryPolicy(nn.Module):
@@ -60,6 +60,7 @@ class MemoryPolicy(nn.Module):
         n_heads: int = 4,
         max_log: int = 64,
         condition: str = "log",
+        hist_len: int = 32,
     ) -> None:
         super().__init__()
         if condition not in CONDITIONS:
@@ -69,12 +70,24 @@ class MemoryPolicy(nn.Module):
         self.action_dim = action_dim
         self.max_log = max_log
         self.vocab = vocab
+        self.hist_len = hist_len
 
         self.vis_in = nn.Sequential(nn.LayerNorm(d_feat), nn.Linear(d_feat, d_model))
         self.state_in = nn.Linear(state_dim, d_model)
 
         mem_dim = 0
-        if condition in ("log", "wrong", "shuffled"):
+        if condition == "rawhist":
+            self.hist_in = nn.Sequential(
+                nn.Linear(hist_len * action_dim, d_model), nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+            mem_dim = d_model
+        elif condition == "elapsed":
+            self.elapsed_in = nn.Sequential(
+                nn.Linear(1, d_model), nn.GELU(), nn.Linear(d_model, d_model)
+            )
+            mem_dim = d_model
+        elif condition in ("log", "wrong", "shuffled"):
             self.tok_emb = nn.Embedding(vocab + 1, d_model)      # +1 = padding
             self.pos_emb = nn.Embedding(max_log, d_model)
             self.empty = nn.Parameter(torch.zeros(d_model))
@@ -111,12 +124,17 @@ class MemoryPolicy(nn.Module):
         return torch.where((log_len == 0).unsqueeze(1), self.empty.expand(b, -1), pooled)
 
     def forward(self, feat: torch.Tensor, state: torch.Tensor,
-                log_tokens=None, log_len=None, counts=None) -> torch.Tensor:
+                log_tokens=None, log_len=None, counts=None,
+                hist=None, elapsed=None) -> torch.Tensor:
         parts = [self.vis_in(feat).flatten(1), self.state_in(state)]
         if self.condition in ("log", "wrong", "shuffled"):
             parts.append(self.encode_memory(log_tokens, log_len))
         elif self.condition == "count":
             parts.append(self.count_in(counts))
+        elif self.condition == "rawhist":
+            parts.append(self.hist_in(hist.flatten(1)))
+        elif self.condition == "elapsed":
+            parts.append(self.elapsed_in(elapsed))
         h = torch.cat(parts, dim=-1)
         return self.head(h).view(-1, self.k, self.action_dim)
 
