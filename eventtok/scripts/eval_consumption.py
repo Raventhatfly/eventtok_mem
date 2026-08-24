@@ -23,7 +23,9 @@ from torch import nn
 
 from .. import paths
 from ..bpe import build_vocab as bpe
-from ..consume.probe import CONDITIONS, MemoryPolicy, build_logs, prefix_tokens
+from ..consume.probe import CONDITIONS, MemoryPolicy
+from ..eval.bpe_boundaries import runs_with_spans
+from ..rollout.online_log import causal_prefix_table, tokens_at_time
 from ..data import repack, subgoals as sg
 from ..data.index import RoboMMEIndex
 from ..data.meta import TaskMeta
@@ -40,6 +42,7 @@ def main() -> None:
     ap.add_argument("--min-frequency", type=int, default=10)
     ap.add_argument("--vocab-size", type=int, default=256)
     ap.add_argument("--max-log", type=int, default=64)
+    ap.add_argument("--max-token-length", type=int, default=4)
     ap.add_argument("--scale", default="2x2")
     ap.add_argument("--epochs", type=int, default=25)
     ap.add_argument("--batch", type=int, default=256)
@@ -73,11 +76,21 @@ def main() -> None:
         for e in train_eps
     ]
     vocab = bpe.train(corpus, vocab_size=args.vocab_size,
-                      min_frequency=args.min_frequency, max_token_length=20)
+                      min_frequency=args.min_frequency, max_token_length=args.max_token_length)
     bpe.assert_no_self_merges(vocab)
-    logs = build_logs(streams, vocab, args.min_span)
+    # Causal logs. The previous build_logs/prefix_tokens pair encoded the whole
+    # episode and then filtered by span end, which leaves the token identities
+    # dependent on future runs -- 70% of prefixes disagreed with the whole-episode
+    # encoding. See rollout/online_log.stable_prefix_encode.
+    logs = {
+        idx: causal_prefix_table(
+            vocab, runs_with_spans(codes, args.min_span)
+        )
+        for idx, codes in streams.items()
+    }
+    _final = [len(v[1][-1]) if v[1] else 0 for v in logs.values()]
     print(f"{args.task}: {len(eps)} eps, vocab {vocab.size}, "
-          f"mean log length {np.mean([len(v) for v in logs.values()]):.1f} tokens",
+          f"mean causal log length {np.mean(_final):.1f} tokens",
           flush=True)
 
     # --- samples ---------------------------------------------------------------
@@ -132,7 +145,8 @@ def main() -> None:
                 src, tt = other[e], t
             else:
                 src, tt = e, t
-            p = prefix_tokens(logs[src], tt, args.max_log)
+            closed_at, tokens_at = logs[src]
+            p = tokens_at_time(closed_at, tokens_at, tt, args.max_log)
             if condition == "shuffled" and len(p) > 1:
                 p = list(rng.permutation(p))
             lens[i] = len(p)

@@ -115,8 +115,21 @@ class OnlineEventLog:
         return len(self.tokens())
 
 
+def vocab_horizon(vocab: BPEVocab) -> int:
+    """The smallest safe stability horizon: the longest token the vocab contains.
+
+    Greedy merges cascade leftward by at most the length of the longest token, so this
+    is sufficient. It is also much tighter than the training cap, and the difference
+    decides whether the log is usable at all: with ``max_token_length=20`` as the
+    horizon, ButtonUnmask -- which averages 19.3 runs per episode -- had an empty log
+    for 99% of every episode, and the "log" condition was silently identical to no
+    memory. Its vocabulary's longest token is 10, and 6 sufficed empirically.
+    """
+    return max((len(vocab.decode_token(i)) for i in range(vocab.size)), default=1)
+
+
 def stable_prefix_encode(
-    vocab: BPEVocab, runs: list[int], max_token_length: int
+    vocab: BPEVocab, runs: list[int], max_token_length: int | None = None
 ) -> list[int]:
     """BPE tokens that can never be revised by future runs.
 
@@ -136,7 +149,14 @@ def stable_prefix_encode(
     longest token, so a token whose span ends more than ``max_token_length`` run
     symbols before the end of the sequence can no longer change. Emit those, hold the
     rest. The log lags reality by a bounded number of runs and is append-only.
+
+    ``max_token_length`` defaults to :func:`vocab_horizon`, the longest token actually
+    in the vocabulary, **not** the cap BPE was trained with. Using the cap over-holds:
+    measured widths are 8-19 against a cap of 20, mean 2.7-3.5, and on ButtonUnmask the
+    cap exceeded the episode's run count so the log never populated at all.
     """
+    if max_token_length is None:
+        max_token_length = vocab_horizon(vocab)
     if not runs:
         return []
     ids = vocab.encode_span(runs)
@@ -152,3 +172,34 @@ def stable_prefix_encode(
         consumed += width
         safe.append(tok)
     return safe
+
+
+def causal_prefix_table(vocab: BPEVocab, runs, max_token_length: int | None = None):
+    """``(closed_at, tokens_at)`` -- the log as it legitimately stood, per closed run.
+
+    Offline replacement for the leaky ``prefix_tokens``. For every prefix of the run
+    sequence it applies :func:`stable_prefix_encode`, so the tokens available at time t
+    are exactly those a policy could have had at t, with no merge informed by a future
+    run.
+
+    Returns the transition index at which each run closed, and the token list valid
+    from that moment until the next run closes. Computed once per episode -- there are
+    only tens of runs -- rather than re-encoding at every transition.
+    """
+    closed_at = [r.end for r in runs]
+    symbols = [r.symbol for r in runs]
+    tokens_at = [
+        stable_prefix_encode(vocab, symbols[: i + 1], max_token_length)
+        for i in range(len(symbols))
+    ]
+    return closed_at, tokens_at
+
+
+def tokens_at_time(closed_at, tokens_at, t: int, max_log: int) -> list[int]:
+    """Look up the causal log at transition ``t`` from a prefix table."""
+    import bisect
+
+    i = bisect.bisect_right(closed_at, t) - 1
+    if i < 0:
+        return []
+    return tokens_at[i][-max_log:]

@@ -34,7 +34,7 @@ def main() -> None:
     ap.add_argument("--ks", type=int, nargs="+", default=[8, 16, 32, 64])
     ap.add_argument("--min-frequencies", type=int, nargs="+", default=[5, 10, 25, 50])
     ap.add_argument("--vocab-size", type=int, default=256)
-    ap.add_argument("--max-token-length", type=int, default=20)
+    ap.add_argument("--max-token-length", type=int, default=4)
     ap.add_argument("--min-span", type=int, default=3)
     ap.add_argument("--tolerance", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0)

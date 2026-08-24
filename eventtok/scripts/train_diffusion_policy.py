@@ -29,7 +29,7 @@ import torch
 from .. import paths
 from ..bpe import build_vocab as bpe
 from ..consume.diffusion import DiffusionPolicy
-from ..consume.probe import build_logs, prefix_tokens
+from ..rollout.online_log import causal_prefix_table, tokens_at_time
 from ..data import repack
 from ..data.index import RoboMMEIndex
 from ..data.meta import TaskMeta
@@ -54,6 +54,8 @@ def main() -> None:
     ap.add_argument("--max-log", type=int, default=64)
     ap.add_argument("--min-span", type=int, default=3)
     ap.add_argument("--min-frequency", type=int, default=10)
+    ap.add_argument("--max-token-length", type=int, default=4,
+                    help="BPE cap. Sets the causal stability horizon, so a\nlarge cap blanks the log: at 20 the log was empty for 66-99% of an episode.")
     ap.add_argument("--scale", default="2x2")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=None)
@@ -77,8 +79,13 @@ def main() -> None:
     corpus = [[r.symbol for r in runs_with_spans(streams[e.epis_idx], args.min_span)]
               for e in train_eps]
     vocab = bpe.train(corpus, vocab_size=256, min_frequency=args.min_frequency,
-                      max_token_length=20)
-    logs = build_logs(streams, vocab, args.min_span)
+                      max_token_length=args.max_token_length)
+    # Causal logs -- see rollout/online_log.stable_prefix_encode. The previous
+    # whole-episode encoding left token identities dependent on future runs.
+    logs = {
+        idx: causal_prefix_table(vocab, runs_with_spans(codes, args.min_span))
+        for idx, codes in streams.items()
+    }
 
     samples = []
     for ep in eps:
@@ -118,7 +125,7 @@ def main() -> None:
         """Back to the per-dimension-std units the BC probe reports, for comparability."""
         return (x + 1.0) / 2.0 * span + a_lo
     print(f"{args.task}: {len(samples)} transitions, vocab {vocab.size}, "
-          f"mean log {np.mean([len(v) for v in logs.values()]):.1f} tokens, "
+          f"mean causal log {np.mean([len(v[1][-1]) if v[1] else 0 for v in logs.values()]):.1f} tokens, "
           f"reference L1 (train mean) {ref_mean:.4f}", flush=True)
 
     ep_ids = [e.epis_idx for e in eps]
@@ -133,7 +140,8 @@ def main() -> None:
             return toks, lens, counts
         for i, (e, t, _, _) in enumerate(samples):
             src = other[e] if memory == "wrong" else e
-            p = prefix_tokens(logs[src], t, args.max_log)
+            closed_at, tokens_at = logs[src]
+            p = tokens_at_time(closed_at, tokens_at, t, args.max_log)
             if memory == "shuffled" and len(p) > 1:
                 p = list(rng.permutation(p))
             lens[i] = len(p)
