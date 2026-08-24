@@ -34,7 +34,7 @@ from ..data import repack
 from ..data.index import RoboMMEIndex
 from ..data.meta import TaskMeta
 from ..eval.bpe_boundaries import runs_with_spans
-from ..models.kmeans import KMeansTokenizer
+from ..models.streams import build_streams
 
 
 def main() -> None:
@@ -54,6 +54,11 @@ def main() -> None:
     ap.add_argument("--max-log", type=int, default=64)
     ap.add_argument("--min-span", type=int, default=3)
     ap.add_argument("--min-frequency", type=int, default=10)
+    ap.add_argument("--tokens", default="action+vision",
+                    choices=["action", "action+vision"],
+                    help="what the EVENT TOKENS are built from. action is the "
+                         "OAT-shaped control; action+vision is the method.")
+    ap.add_argument("--vision-weight", type=float, default=1.0)
     ap.add_argument("--max-token-length", type=int, default=4,
                     help="BPE cap. Sets the causal stability horizon, so a\nlarge cap blanks the log: at 20 the log was empty for 66-99% of an episode.")
     ap.add_argument("--scale", default="2x2")
@@ -74,8 +79,11 @@ def main() -> None:
     train_eps = [eps[i] for i in order[:cut]]
     train_ids = {e.epis_idx for e in train_eps}
 
-    km = KMeansTokenizer(args.k, seed=args.seed).fit(meta, train_eps)
-    streams = {e.epis_idx: km.stream_for_episode(meta, e) for e in eps}
+    streams = build_streams(
+        meta, train_eps, eps, tokens=args.tokens, k=args.k, seed=args.seed,
+        features=feats, horizon=args.chunk, vision_weight=args.vision_weight,
+    )
+    print(f"  event tokens from: {args.tokens}", flush=True)
     corpus = [[r.symbol for r in runs_with_spans(streams[e.epis_idx], args.min_span)]
               for e in train_eps]
     vocab = bpe.train(corpus, vocab_size=256, min_frequency=args.min_frequency,
