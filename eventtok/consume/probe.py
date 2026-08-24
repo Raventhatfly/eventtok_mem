@@ -44,7 +44,7 @@ import torch
 from torch import nn
 
 CONDITIONS = ("none", "log", "wrong", "shuffled", "count", "rawhist", "elapsed",
-              "codes", "runs")
+              "codes", "runs", "rawhist+log", "rawhist+wrong")
 
 
 class MemoryPolicy(nn.Module):
@@ -77,7 +77,24 @@ class MemoryPolicy(nn.Module):
         self.state_in = nn.Linear(state_dim, d_model)
 
         mem_dim = 0
-        if condition == "rawhist":
+        self.with_hist = condition.startswith("rawhist+")
+        if self.with_hist:
+            # Both streams, side by side: the chunk for recent detail, the token
+            # sequence for span. This is the configuration the design actually calls
+            # for; log-versus-rawhist was a mis-specified comparison.
+            self.hist_in = nn.Sequential(
+                nn.Linear(hist_len * action_dim, d_model), nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+            self.tok_emb = nn.Embedding(vocab + 1, d_model)
+            self.pos_emb = nn.Embedding(max_log, d_model)
+            self.empty = nn.Parameter(torch.zeros(d_model))
+            layer = nn.TransformerEncoderLayer(
+                d_model, n_heads, d_model * 4, batch_first=True, norm_first=True
+            )
+            self.mem_enc = nn.TransformerEncoder(layer, n_layers)
+            mem_dim = d_model * 2
+        elif condition == "rawhist":
             self.hist_in = nn.Sequential(
                 nn.Linear(hist_len * action_dim, d_model), nn.GELU(),
                 nn.Linear(d_model, d_model),
@@ -128,7 +145,10 @@ class MemoryPolicy(nn.Module):
                 log_tokens=None, log_len=None, counts=None,
                 hist=None, elapsed=None) -> torch.Tensor:
         parts = [self.vis_in(feat).flatten(1), self.state_in(state)]
-        if self.condition in ("log", "wrong", "shuffled", "codes", "runs"):
+        if self.with_hist:
+            parts.append(self.hist_in(hist.flatten(1)))
+            parts.append(self.encode_memory(log_tokens, log_len))
+        elif self.condition in ("log", "wrong", "shuffled", "codes", "runs"):
             parts.append(self.encode_memory(log_tokens, log_len))
         elif self.condition == "count":
             parts.append(self.count_in(counts))

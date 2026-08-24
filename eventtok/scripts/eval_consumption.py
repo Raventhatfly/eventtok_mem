@@ -182,7 +182,7 @@ def main() -> None:
         pad = SYMBOLS
         toks[:] = pad
         for i, (e, t, _, _, _) in enumerate(samples):
-            if condition == "wrong":
+            if condition in ("wrong", "rawhist+wrong"):
                 src, tt = other[e], t
             else:
                 src, tt = e, t
@@ -272,6 +272,8 @@ def main() -> None:
             return f"{d:+.4f} ({rel:+.1%})"
         return "n/a"
     for a, b, why in [
+        ("rawhist+log", "rawhist", "does the log ADD to the action chunk"),
+        ("rawhist+log", "rawhist+wrong", "and does that addition need the RIGHT log"),
         ("log", "none", "does memory help at all"),
         ("codes", "rawhist", "what QUANTISATION costs"),
         ("runs", "codes", "what COLLAPSING REPEATS costs"),
