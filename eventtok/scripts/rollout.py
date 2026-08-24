@@ -36,6 +36,20 @@ BENCH_SRC = ("/n/home04/wfy/repos/robomme_policy_learning/"
              "third_party/robomme_benchmark/src")
 
 
+def obs_state(obs) -> np.ndarray:
+    """The 8-dim state in the dataset's convention: 7 joint angles + gripper.
+
+    ``build_robomme_dataset`` builds it as ``concat(joint_state, gripper_state[:1])``,
+    and the simulator exposes those as ``joint_state_list`` and ``gripper_state_list``.
+    There is **no** ``ee_pose`` key -- an earlier version read one with a zeros default,
+    so the state was silently all zeros, the delta-to-absolute conversion added nothing,
+    and every episode died on the first step with an IK error.
+    """
+    j = np.asarray(obs["joint_state_list"][-1], dtype=np.float32).reshape(-1)[:7]
+    g = np.asarray(obs["gripper_state_list"][-1], dtype=np.float32).reshape(-1)[:1]
+    return np.concatenate([j, g]).astype(np.float32)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", default="SwingXtimes")
@@ -52,6 +66,8 @@ def main() -> None:
     ap.add_argument("--min-frequency", type=int, default=10)
     ap.add_argument("--max-token-length", type=int, default=4)
     ap.add_argument("--max-log", type=int, default=64)
+    ap.add_argument("--action-space", default="joint_angle",
+                    help="joint_angle matches the dataset: its actions are\n                         7 joint targets + gripper, with the action-space\n                         bounds being Franka joint limits.")
     ap.add_argument("--max-steps", type=int, default=1300)
     ap.add_argument("--sample-steps", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1)
@@ -162,12 +178,13 @@ def main() -> None:
         print(f"  [{cond}] trained, final denoise loss {loss.item():.4f}", flush=True)
 
         builder = BenchmarkEnvBuilder(env_id=args.task, dataset="test",
-                                      action_space="ee_pose", max_steps=args.max_steps)
+                                      action_space=args.action_space, max_steps=args.max_steps)
         n_ep = min(args.episodes, builder.get_episode_num())
         successes, outcomes = 0, []
         for e in range(n_ep):
             env = builder.make_env_for_episode(e)
             obs, info = env.reset()
+            st0 = obs_state(obs)
             olog = OnlineEventLog(km_online.centroids, scale, vocab, chunk=args.chunk,
                                   min_span=args.min_span, max_log=args.max_log)
             # `wrong` replays another episode's log, so the memory is well-formed and
@@ -176,15 +193,13 @@ def main() -> None:
             if cond == "wrong":
                 src = other[eps[e % len(eps)].epis_idx]
                 wrong_src = logs[src]
-            outcome, steps = "unknown", 0
+            outcome, steps = "timeout", 0
             while steps < args.max_steps:
                 front = np.asarray(obs["front_rgb_list"][-1], dtype=np.uint8)
                 f = torch.from_numpy(
                     encoder.encode(front[None], scale="2x2").astype(np.float32)
                 ).to(device)
-                st = np.asarray(obs.get("ee_pose", np.zeros(8)), dtype=np.float32).reshape(-1)[:8]
-                if st.shape[0] < 8:
-                    st = np.pad(st, (0, 8 - st.shape[0]))
+                st = obs_state(obs)
                 stt = torch.from_numpy(st[None]).to(device)
                 if cond == "wrong":
                     p = tokens_at_time(*wrong_src, steps, args.max_log)
@@ -205,6 +220,7 @@ def main() -> None:
                 for j in range(args.chunk):
                     a = chunk[j].copy()
                     a[:7] += st[:7]                                # delta -> absolute
+                    a = np.clip(a, env.action_space.low, env.action_space.high)
                     obs, r, term, trunc, info = env.step(a.astype(np.float32))
                     olog.push(chunk[j], st)
                     steps += 1
