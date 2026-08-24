@@ -289,7 +289,10 @@ def main() -> None:
                 print(f"    pooling collapses the benefit itself "
                       f"({(nb_c - ca) / nb_c:+.1%} -> {ben_g:+.1%})")
 
-        out = args.out or str(paths.CACHE_ROOT / "eval" / f"dp_{args.task}.json")
+    # Dedented deliberately: this sat inside the multi-`cond` branch, so a run with a
+    # single conditioning mode left `out` unbound and crashed *after* 150 epochs of
+    # training and DDIM sampling. All 16 cells of one sweep were lost that way.
+    out = args.out or str(paths.CACHE_ROOT / "eval" / f"dp_{args.task}.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as fh:
         json.dump({"task": args.task, "reference_mean_L1": ref_mean,

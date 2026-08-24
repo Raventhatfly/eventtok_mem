@@ -49,4 +49,11 @@ nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || true
     --task "${TASK}" --seed "${SEED}" --epochs 150 --tokens "${TOK}" \
     --memories none log wrong count --cond crossattn \
     --out "${CACHE}/eval/dp_method/${TASK}_s${SEED}_${TAG}.json"
+STATUS=$?
+# Without this the array reported COMPLETED 0:0 for 16 cells that had each crashed
+# after a full 150-epoch train, because the trailing echo set the exit code.
+if [[ ${STATUS} -ne 0 ]]; then
+  echo "=== $(date -Is) FAILED ${TASK} s${SEED} ${TOK} exit ${STATUS} ==="
+  exit ${STATUS}
+fi
 echo "=== $(date -Is) done ==="
