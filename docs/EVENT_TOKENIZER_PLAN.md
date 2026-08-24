@@ -49,6 +49,83 @@ Two supporting arguments, and their current standing:
 
 ---
 
+## 1.5 The pipeline, in pictures
+
+### What the tokenizer does
+
+```mermaid
+flowchart LR
+  A["executed actions<br/>20-step chunks"] -->|k-means| B["codes<br/>12 12 12 7 7 7 12 12"]
+  V["visual features<br/>centred + PCA"] -.->|optional| B
+  B -->|collapse repeats<br/>drop runs &lt; 3| C["run symbols<br/>12 7 12"]
+  C -->|BPE merge| D["event tokens<br/>&lsqb;12·7&rsqb; 12"]
+  D --> E["the log<br/>append-only"]
+  E --> P["policy"]
+  OBS["current image + state"] --> P
+```
+
+Each arrow discards something. That is intended — the point is a short, countable
+sequence — but it is also why the log can never beat the raw actions it summarises (§6.1).
+
+### Why the log and the action chunk are complementary, not rivals
+
+One SwingXtimes episode is ~430 steps. The policy's action chunk sees 32 of them.
+
+```
+episode  ├────────────────────────────────────────────────────────────┤  ~430 steps
+              swing 1        swing 2        swing 3        press button
+         ├────────────┤ ├────────────┤ ├────────────┤ ├──────────────┤
+
+rawhist                                              ├──┤   32 steps ≈ 7% of the episode
+                                                     └─ can see: the current motion
+                                                        cannot see: that 2 swings already happened
+
+log      ▸12 ▸7  ▸12 ▸7  ▸12 ▸7                            ~6 tokens, spans everything
+         └─ can see: the whole history, countable
+            cannot see: fine detail of the last second
+```
+
+This is why `log` vs `rawhist` was the wrong experiment and `rawhist+log` vs `rawhist`
+is the right one.
+
+### The future leak, and the fix
+
+Whole-episode BPE, then filtering by span end, is **not** causal:
+
+```
+runs so far:   A B                    encode → [AB]        ← token emitted at t=70
+runs so far:   A B C                  encode → [A] [BC]    ← at t=95 the SAME prefix
+                                                              now reads differently
+
+           the token at t=70 depended on a run that had not happened yet.
+           Measured: 70% of prefixes disagreed with the whole-episode encoding.
+```
+
+The fix (`stable_prefix_encode`): a greedy merge cascades leftward by at most the longest
+token in the vocabulary, so anything older than that horizon can never change.
+
+```
+runs:  A B C D E F G H I J
+       └──────── safe ────┘└─ held ─┘        horizon = longest token (not the training cap)
+       emit these           may still change
+```
+
+Setting the horizon to BPE's *training cap* of 20 blanked the log entirely on
+ButtonUnmask, which averages 19.3 runs per episode — the `log` condition became
+`none` in disguise (§4.2).
+
+### What the evidence supports
+
+```mermaid
+flowchart TD
+  T["event tokens"] --> ID["identity<br/>+32.7% over majority, 16 tasks"]
+  T --> CNT["counting<br/>92–100%, extrapolates to unseen N"]
+  T --> MEM["policy memory"]
+  ID --> OK1["HOLDS"]
+  CNT --> TIE["holds — but a 15-line<br/>gripper counter ties it"]
+  MEM --> UNK["unresolved: 2 of 4 tasks,<br/>seed-fragile, and 0% rollout<br/>on a policy that never succeeds"]
+```
+
 ## 2. Data and infrastructure
 
 `/n/netscratch/hankyang_lab/Lab/felix/dataset/robomme/` — 16 tasks × 100 episodes.
