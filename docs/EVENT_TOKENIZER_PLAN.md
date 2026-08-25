@@ -51,12 +51,50 @@ Two supporting arguments, and their current standing:
 
 ## 1.5 The pipeline, in pictures
 
-### What the tokenizer does
+### How one code is produced
+
+k-means does **not** run on actions with vision bolted on afterwards. Both modalities are
+turned into vectors, normalised, **concatenated**, and k-means runs on the joined vector.
+One transition in, one integer out. Real shapes, SwingXtimes at `scale=2x2`:
+
+```
+ONE TRANSITION t
+│
+├─ action chunk ─────────────────────────────────────────────────────────┐
+│    actions[t]                            (20 steps × 8 dims)           │
+│    minus state[t] on dims 0..6           ← delta, so the same motion    │
+│    ÷ per-dim std (dead dims → 0)           looks alike anywhere         │
+│    flatten                               → 160-d                       │
+│    scale so total variance = 1.0         → 160-d  ─────────────────────┤
+│                                                                        │
+├─ visual features ──────────────────────────────────────────────────────┤
+│    feat_t                                (4 tokens × 2048)             │
+│    feat_{t+20} − feat_t   ← the change   (4 tokens × 2048)             │
+│    concat + flatten                      → 16384-d                     │
+│    centre  ← 99.8% of SigLIP's energy is a constant; skip this and     │
+│              k-means clusters that constant                            │
+│    PCA                                   → 64-d                        │
+│    scale so total variance = 1.0         → 64-d   ─────────────────────┤
+│                                                                        │
+└─ CONCATENATE ──────────────────────────────────────────────────────────┘
+                                           → 224-d vector for transition t
+                                                    │
+                                    nearest of k centroids
+                                                    │
+                                                    ▼
+                                            code, e.g. 12
+```
+
+Equal variance per block is why they combine at all: raw, the 16384-d vision block would
+swamp the 160-d action block by sheer dimension count. It is also a fixed choice that can
+be wrong — on PatternLock vision carries no signal, so equal weighting spends half the
+distance budget on noise, which is what `vision_weight` exists to fix.
+
+### From codes to the log
 
 ```mermaid
 flowchart LR
-  A["executed actions<br/>20-step chunks"] -->|k-means| B["codes<br/>12 12 12 7 7 7 12 12"]
-  V["visual features<br/>centred + PCA"] -.->|optional| B
+  B["codes, one per transition<br/>12 12 12 7 7 7 12 12 12"]
   B -->|collapse repeats<br/>drop runs &lt; 3| C["run symbols<br/>12 7 12"]
   C -->|BPE merge| D["event tokens<br/>&lsqb;12·7&rsqb; 12"]
   D --> E["the log<br/>append-only"]
