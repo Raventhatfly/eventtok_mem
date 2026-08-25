@@ -45,6 +45,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .encoder import RegisterEncoder
+from .nested_dropout import apply_nested_dropout
 from .fsq import FSQ
 
 # Modality ids for the encoder's token-type embedding.
@@ -82,6 +83,7 @@ class EventTokenizer(nn.Module):
         causal_registers: bool = True,
         use_vision: bool = False,
         far_head: bool = False,
+        nested_dropout: bool = False,
     ) -> None:
         super().__init__()
         self.action_dim = action_dim
@@ -90,6 +92,7 @@ class EventTokenizer(nn.Module):
         self.n_vis_tokens = n_vis_tokens
         self.n_registers = n_registers
         self.use_vision = use_vision
+        self.nested_dropout = nested_dropout
 
         # Each action step is one token, so the encoder sees the chunk's temporal
         # structure rather than a flattened vector.
@@ -159,6 +162,13 @@ class EventTokenizer(nn.Module):
         feat_far: torch.Tensor | None = None,
     ) -> TokenizerOutput:
         tokens, z_q, digits = self.encode(actions, feat_t, feat_next)
+        # Nested dropout, training only: zero a random suffix of the registers so the
+        # head must reconstruct from a prefix. Without it the registers are an unordered
+        # set and register 0 carries nothing in particular -- OAT credits this mechanism
+        # with 21 points on LIBERO, and the first version of this project omitted it and
+        # still reported that "the learned tokenizer does not beat k-means".
+        if self.nested_dropout and self.training:
+            z_q, _ = apply_nested_dropout(z_q)
         # The register axis is the coarse-to-fine ordering, not a temporal axis,
         # so pooling here does not touch count information.
         code = z_q.mean(dim=1)

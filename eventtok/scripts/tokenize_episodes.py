@@ -35,6 +35,7 @@ def load_model(ckpt_path: str, device: torch.device) -> tuple[EventTokenizer, di
         fsq_levels=tuple(a["levels"]),
         causal_registers=not a["no_causal"],
         use_vision=a.get("use_vision", False),
+        nested_dropout=a.get("nested_dropout", False),
         far_head=a.get("far_horizon") is not None,
     ).to(device)
     model.load_state_dict(blob["state_dict"])

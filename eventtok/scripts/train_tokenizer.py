@@ -45,6 +45,7 @@ def build(args, dataset: TransitionDataset) -> EventTokenizer:
         fsq_levels=tuple(args.levels),
         causal_registers=not args.no_causal,
         use_vision=args.use_vision,
+        nested_dropout=args.nested_dropout,
         far_head=args.far_horizon is not None,
     )
 
@@ -83,6 +84,9 @@ def main() -> None:
     ap.add_argument("--layers", type=int, default=3)
     ap.add_argument("--d-model", type=int, default=256)
     ap.add_argument("--no-causal", action="store_true")
+    ap.add_argument("--nested-dropout", action="store_true",
+                    help="OAT's ordering mechanism. Off by default so the "
+                         "ablation is explicit; on for a real OAT comparison.")
     ap.add_argument("--use-vision", action="store_true",
                     help="add visual context to the encoder (off by default: it "
                          "pulled codes toward trajectory phase, not motion type)")
