@@ -94,16 +94,61 @@ class OnlineEventLog:
                 start = i
         return out
 
+    def _refresh(self) -> None:
+        if not self._dirty:
+            return
+        runs = self._runs()
+        self._tokens = self.vocab.encode_span(runs) if runs else []
+        self._dirty = False
+
     def tokens(self) -> list[int]:
-        """The event tokens closed so far, most recent ``max_log`` kept."""
-        if self._dirty:
-            runs = self._runs()
-            self._tokens = self.vocab.encode_span(runs) if runs else []
-            self._dirty = False
+        """The most recent ``max_log`` event tokens, in order.
+
+        Older tokens are evicted, but **their counts are not lost** -- see
+        :meth:`overflow` and :meth:`total_counts`. Plain FIFO would discard exactly
+        what this project exists to preserve: swing ten times, keep the last five
+        tokens, and the count reads five. Measured on a 1300-step failing rollout,
+        an oscillating policy produces 93-156 tokens against a 64 budget, so the
+        eviction path is reached in practice and used to drop history silently.
+        """
+        self._refresh()
         return self._tokens[-self.max_log :]
 
+    def overflow(self, size: int | None = None) -> np.ndarray:
+        """How many times each token was evicted from the visible window.
+
+        The sequence is bounded; this is not. Order is lost for evicted events --
+        which counting does not need -- while multiplicity is kept exactly.
+        """
+        self._refresh()
+        n = size if size is not None else self.vocab.size
+        v = np.zeros(n, dtype=np.float32)
+        evicted = self._tokens[: max(len(self._tokens) - self.max_log, 0)]
+        for t in evicted:
+            if 0 <= t < n:
+                v[t] += 1.0
+        return v
+
+    def total_counts(self, size: int | None = None) -> np.ndarray:
+        """Occurrence count per vocabulary entry over the WHOLE episode.
+
+        Exact regardless of how much was evicted: visible window + overflow. This is
+        the quantity the count-preservation claim rests on, so it must not depend on
+        the budget.
+        """
+        return self.counts(size) + self.overflow(size)
+
+    def overflowed(self) -> int:
+        """How many tokens have been evicted. Non-zero means order is incomplete."""
+        self._refresh()
+        return max(len(self._tokens) - self.max_log, 0)
+
     def counts(self, size: int | None = None) -> np.ndarray:
-        """Occurrence count per vocabulary entry -- the derived-state baseline."""
+        """Occurrence count within the visible window only.
+
+        Prefer :meth:`total_counts` for anything that counts; this one silently
+        under-reports once the window has overflowed.
+        """
         n = size if size is not None else self.vocab.size
         v = np.zeros(n, dtype=np.float32)
         for t in self.tokens():
@@ -203,3 +248,22 @@ def tokens_at_time(closed_at, tokens_at, t: int, max_log: int) -> list[int]:
     if i < 0:
         return []
     return tokens_at[i][-max_log:]
+
+
+def overflow_at_time(closed_at, tokens_at, t: int, max_log: int, size: int) -> np.ndarray:
+    """Evicted-token counts at ``t`` -- the offline twin of ``OnlineEventLog.overflow``.
+
+    Kept beside ``tokens_at_time`` on purpose. The last time the offline and online
+    paths disagreed about what the log contained, the difference was a future leak
+    that stood undetected across every reported result.
+    """
+    import bisect
+
+    v = np.zeros(size, dtype=np.float32)
+    i = bisect.bisect_right(closed_at, t) - 1
+    if i < 0:
+        return v
+    for tok in tokens_at[i][: max(len(tokens_at[i]) - max_log, 0)]:
+        if 0 <= tok < size:
+            v[tok] += 1.0
+    return v
