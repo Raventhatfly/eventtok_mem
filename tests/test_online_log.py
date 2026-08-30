@@ -20,7 +20,7 @@ from eventtok.data.index import RoboMMEIndex
 from eventtok.data.meta import TaskMeta
 from eventtok.eval.bpe_boundaries import encode_aligned, runs_with_spans
 from eventtok.models.kmeans import KMeansTokenizer
-from eventtok.rollout.online_log import OnlineEventLog
+from eventtok.rollout.online_log import OnlineEventLog, stable_prefix_encode
 
 TASK = "SwingXtimes"
 CHUNK = 20
@@ -60,9 +60,10 @@ def test_online_codes_match_offline(fixture) -> None:
     lo, hi = meta.rows(ep.epis_idx)
     log = _online_for_episode(meta, km, vocab, ep)
     offline = streams[ep.epis_idx]
-    # Online can only code a chunk once its CHUNK actions have been executed, so it
-    # produces len - CHUNK codes against the offline stream's len.
-    assert len(log._codes) == max((hi - lo) - CHUNK, 0)
+    # Online can only code a chunk once its CHUNK actions have been executed, so the
+    # chunks it can code start at t = 0 .. n - CHUNK: one fewer than the offline
+    # stream's per-row code for every row, plus the one at t = n - CHUNK itself.
+    assert len(log._codes) == max((hi - lo) - CHUNK + 1, 0)
     assert log._codes == list(offline[: len(log._codes)])
 
 
@@ -72,7 +73,11 @@ def test_online_tokens_match_offline(fixture) -> None:
     for ep in eps[:4]:
         log = _online_for_episode(meta, km, vocab, ep)
         truncated = list(streams[ep.epis_idx])[: len(log._codes)]
-        offline = [t for t, _, _ in encode_aligned(vocab, runs_with_spans(truncated, MIN_SPAN))]
+        runs = [r.symbol for r in runs_with_spans(truncated, MIN_SPAN)]
+        # The stabilised encoding, which is what the offline cache stores. Comparing
+        # against encode_aligned would only assert that both paths share the same
+        # future leak.
+        offline = stable_prefix_encode(vocab, runs)
         assert log.tokens() == offline, f"episode {ep.epis_idx}"
 
 

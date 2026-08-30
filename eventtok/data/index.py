@@ -148,6 +148,14 @@ class RoboMMEIndex:
     def episodes(self) -> tuple[Episode, ...]:
         return tuple(self._episodes)
 
+    def task_of(self, epis_idx: int) -> str:
+        """Task name from a global episode index, without touching the index file.
+
+        ``epis_idx // 100`` is the position in the alphabetical task list. Cheap enough
+        to call per sample in a data loader, which ``self[epis_idx].task`` is not.
+        """
+        return TASKS[int(epis_idx) // EPISODES_PER_TASK]
+
     def by_task(self, task: str) -> list[Episode]:
         if task not in TASKS:
             raise KeyError(f"unknown task {task!r}; expected one of {TASKS}")

@@ -104,6 +104,57 @@ class MultimodalTokenizer:
         self.has_vision = "vision" in raw
         return self
 
+    def raw_for(self, meta: TaskMeta, episodes, getter=None) -> dict:
+        """Un-normalised feature blocks for these episodes. Exposed for a joint fit."""
+        return self._features(meta, getter, *self._rows(meta, episodes))
+
+    def fit_raw(self, raws: list[dict], max_rows: int | None = None) -> "MultimodalTokenizer":
+        """Fit blocks and centroids on feature matrices pooled across several tasks.
+
+        One policy trained on 16 tasks needs one vocabulary: with a per-task fit, token 7
+        means a different motion in each task and its embedding row is asked to be all of
+        them at once.
+
+        Rows are subsampled to ``max_rows`` before stacking. The raw vision block is
+        16k-dimensional, so all 16 tasks at full length is ~26 GB, while k-means at k=16
+        and a 64-component PCA are both well determined by a few 10k rows.
+        """
+        from scipy.cluster.vq import kmeans2
+
+        from ..scripts.compare_modalities import Block
+
+        names = list(raws[0])
+        for r in raws:
+            if list(r) != names:
+                raise ValueError(f"blocks differ across tasks: {names} vs {list(r)}")
+
+        rng = np.random.default_rng(self.seed)
+        if max_rows is not None:
+            per = max(1, max_rows // len(raws))
+            keep = [
+                rng.choice(len(r[names[0]]), min(per, len(r[names[0]])), replace=False)
+                for r in raws
+            ]
+            raws = [{n: r[n][k] for n in names} for r, k in zip(raws, keep)]
+
+        pooled = {n: np.concatenate([r[n] for r in raws], axis=0) for n in names}
+        self._blocks = {
+            n: Block(n, None if n == "action" else self.pca).fit(pooled[n], seed=self.seed)
+            for n in names
+        }
+        X = self._stack(pooled)
+        np.random.seed(self.seed)
+        self.centroids, _ = kmeans2(X, self.n_clusters, minit="++", seed=self.seed)
+        self.has_vision = "vision" in names
+        return self
+
+    def encode_raw(self, raw: dict) -> np.ndarray:
+        """Nearest centroid per row, for an already-built raw block dict."""
+        if self.centroids is None:
+            raise RuntimeError("fit() first")
+        X = self._stack(raw)
+        return ((X[:, None, :] - self.centroids[None]) ** 2).sum(-1).argmin(1)
+
     def _stack(self, raw) -> np.ndarray:
         parts = []
         for name, X in raw.items():

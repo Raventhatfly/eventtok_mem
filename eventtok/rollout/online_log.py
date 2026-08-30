@@ -43,6 +43,7 @@ class OnlineEventLog:
         chunk: int = 20,
         min_span: int = 3,
         max_log: int = 64,
+        max_token_length: int | None = None,
     ) -> None:
         self.centroids = np.asarray(centroids, dtype=np.float32)
         self.action_scale = np.asarray(action_scale, dtype=np.float32)
@@ -50,6 +51,9 @@ class OnlineEventLog:
         self.chunk = chunk
         self.min_span = min_span
         self.max_log = max_log
+        # Held back by the stability horizon rather than emitted eagerly; see
+        # stable_prefix_encode. None means the longest token in the vocabulary.
+        self.max_token_length = max_token_length
         self.reset()
 
     def reset(self) -> None:
@@ -98,7 +102,15 @@ class OnlineEventLog:
         if not self._dirty:
             return
         runs = self._runs()
-        self._tokens = self.vocab.encode_span(runs) if runs else []
+        # stable_prefix_encode, not encode_span. Whole-sequence BPE is not prefix
+        # stable: appending a run can create an adjacency that fires an earlier merge
+        # and rewrites a token the policy has already seen. The offline cache went
+        # through causal_prefix_table, which applies this; the online log did not, so
+        # a rollout was reading a log built by different rules than training used.
+        self._tokens = (
+            stable_prefix_encode(self.vocab, runs, self.max_token_length)
+            if runs else []
+        )
         self._dirty = False
 
     def tokens(self) -> list[int]:
