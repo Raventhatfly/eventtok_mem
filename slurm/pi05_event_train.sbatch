@@ -76,6 +76,18 @@ echo "exp=${EXP_NAME} memory=${EVENT_MODE} tag=${EVENT_TAG} drop=${EVENT_DROP}"
 echo "history_config=${HISTORY_CONFIG}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true
 
+# Bail before python if the card is too small. pi0.5's train state needs ~48 GB at init,
+# so a 40 GB A100 -- or worse, a 20 GB MIG slice -- dies inside init_train_state after
+# holding the GPU for several minutes at 0% utilisation. Two such jobs earned a Kempner
+# idle-GPU warning. Five seconds here instead.
+MIN_GPU_MB=${MIN_GPU_MB:-70000}
+SMALLEST=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
+    | sort -n | head -1)
+if [ -n "${SMALLEST}" ] && [ "${SMALLEST}" -lt "${MIN_GPU_MB}" ]; then
+    echo "GPU has ${SMALLEST} MiB, need ${MIN_GPU_MB}; releasing rather than OOMing in init"
+    exit 1
+fi
+
 # A first attempt has nothing to resume from; initialize_checkpoint_dir errors on
 # --resume with an empty directory, so only pass it once a checkpoint exists.
 CKPT_DIR=${CKPT_DIR:-${CKPT_BASE}/mme_vla_suite/${EXP_NAME}}
