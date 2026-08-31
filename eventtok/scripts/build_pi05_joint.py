@@ -46,12 +46,20 @@ def main() -> None:
         tmp.rename(out)
         print(f"    wrote {out}", flush=True)
 
+    def write_tok(blob: dict) -> None:
+        out = out_dir / f"tokenizer_{args.tag}.npz"
+        tmp = out.with_name(out.name + ".tmp")
+        with open(tmp, "wb") as fh:
+            np.savez_compressed(fh, **blob)
+        tmp.rename(out)
+        print(f"    wrote {out}", flush=True)
+
     joint.build_joint(
         args.tasks, k=args.k, chunk=args.chunk, min_span=args.min_span,
         min_frequency=args.min_frequency, max_token_length=args.max_token_length,
         max_log=args.max_log, scale=args.scale, seed=args.seed,
         fit_episodes=args.fit_episodes, fit_rows=args.fit_rows,
-        vision_weight=args.vision_weight, on_task=write,
+        vision_weight=args.vision_weight, on_task=write, on_tokenizer=write_tok,
     )
 
 

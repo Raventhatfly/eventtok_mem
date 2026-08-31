@@ -55,6 +55,7 @@ def build_joint(
     fit_rows: int = 60_000,
     vision_weight: float = 1.0,
     on_task=None,
+    on_tokenizer=None,
 ) -> dict:
     """Fit one tokenizer across ``tasks``, then emit a per-frame cache for each.
 
@@ -65,6 +66,10 @@ def build_joint(
         fit_rows: total rows kept for the fit, split evenly across tasks.
         on_task: optional ``callback(task, blob)`` called as each task's cache is
             finished, so a long build can write incrementally.
+        on_tokenizer: optional ``callback(blob)`` receiving the fitted tokenizer, BPE
+            vocabulary and per-task action scales. A closed-loop rollout has to assign
+            the same codes the cache used, and it cannot refit -- it has one episode of
+            data and no future frames.
 
     Returns:
         ``{task: blob}``, each blob in the ``np.savez`` form ``EventLogCache`` reads.
@@ -124,6 +129,29 @@ def build_joint(
     n_symbols, pad_id = vocab.size, vocab.size
     print(f"joint vocab: {n_symbols} symbols over {len(tasks)} tasks", flush=True)
 
+    if on_tokenizer is not None:
+        sd = tok.state_dict()
+        sd["bpe"] = np.frombuffer(
+            json.dumps({
+                "merges": [[list(a), list(b)] for a, b in vocab.merges],
+                "tokens": [list(t) for t in vocab.tokens],
+                "min_frequency": vocab.min_frequency,
+                "max_token_length": vocab.max_token_length,
+            }).encode(),
+            dtype=np.uint8,
+        )
+        # Per task: k-means divides delta actions by this before anything else, and it
+        # is a property of the training task rather than of a rollout.
+        for task in tasks:
+            sd[f"action_scale.{task}"] = np.asarray(metas[task].action_scale,
+                                                    dtype=np.float32)
+        sd["tasks"] = np.array(tasks, dtype=object)
+        sd["min_span"] = min_span
+        sd["max_log"] = max_log
+        sd["chunk"] = chunk
+        sd["scale"] = np.array(scale, dtype=object)
+        on_tokenizer(sd)
+
     shared = {
         "tokens": "action+vision", "k": k, "chunk": chunk, "min_span": min_span,
         "min_frequency": min_frequency, "max_token_length": max_token_length,
@@ -140,6 +168,15 @@ def build_joint(
             lo, hi = metas[task].rows(ep.epis_idx)
             runs = runs_with_spans(streams[task][ep.epis_idx], min_span)
             closed_at, tokens_at = causal_prefix_table(vocab, runs)
+            # Reveal a run only once it is causally knowable. Row t's code uses the
+            # visual feature at t+chunk (the block is [feat_t, feat_{t+chunk} - feat_t]),
+            # and a run is only known to have ended once the differing row after it is
+            # coded -- row `end`, at frame end+chunk. Revealing at `end`, as the plain
+            # table does, hands the policy a token computed from a frame it has not seen.
+            # Measured: with this shift the online rollout log matches the cache exactly
+            # at every frame; without it, every frame disagrees for the first 20 steps
+            # after each run and the rollout is strictly behind what training showed.
+            closed_at = [c + chunk for c in closed_at]
             for t in range(hi - lo):
                 p = tokens_at_time(closed_at, tokens_at, t, max_log)
                 row = np.full(max_log, pad_id, dtype=np.int16)

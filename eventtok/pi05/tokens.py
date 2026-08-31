@@ -89,6 +89,10 @@ def build_task(
         lo, hi = meta.rows(ep.epis_idx)
         runs = runs_with_spans(streams[ep.epis_idx], min_span)
         closed_at, tokens_at = causal_prefix_table(vocab, runs)
+        # See joint.build_joint: row t's code uses the frame at t+chunk, and a run is
+        # only known to have ended once the differing row after it is coded. Revealing
+        # at `end` hands the policy a token computed from a frame it has not seen.
+        closed_at = [c + chunk for c in closed_at]
         for t in range(hi - lo):
             p = tokens_at_time(closed_at, tokens_at, t, max_log)
             row = np.full(max_log, pad_id, dtype=np.int16)

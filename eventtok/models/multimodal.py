@@ -148,6 +148,57 @@ class MultimodalTokenizer:
         self.has_vision = "vision" in names
         return self
 
+    # ------------------------------------------------------------- persistence
+    def state_dict(self) -> dict:
+        """Everything needed to reproduce a code from raw features.
+
+        A closed-loop rollout has to assign the *same* codes the training cache used, so
+        the fit has to leave the process it was made in. Blocks carry a mean, an optional
+        PCA basis and an energy scale; without all three the online codes are a different
+        quantisation of the same features and the log the policy reads at test time is
+        not the log it trained on.
+        """
+        from ..scripts.compare_modalities import Block
+
+        if self.centroids is None:
+            raise RuntimeError("fit() first")
+        out = {
+            "centroids": np.asarray(self.centroids, dtype=np.float32),
+            "block_names": np.array(list(self._blocks), dtype=object),
+            "n_clusters": self.n_clusters, "horizon": self.horizon, "pca": self.pca,
+            "vision_weight": self.vision_weight, "seed": self.seed,
+        }
+        for name, b in self._blocks.items():
+            out[f"{name}.mu"] = np.asarray(b.mu, dtype=np.float32)
+            out[f"{name}.scale"] = np.float32(b.scale)
+            out[f"{name}.n_components"] = -1 if b.n_components is None else b.n_components
+            if b.basis is not None:
+                out[f"{name}.basis"] = np.asarray(b.basis, dtype=np.float32)
+        return out
+
+    @classmethod
+    def from_state_dict(cls, sd) -> "MultimodalTokenizer":
+        from ..scripts.compare_modalities import Block
+
+        tok = cls(
+            n_clusters=int(sd["n_clusters"]), horizon=int(sd["horizon"]),
+            pca=int(sd["pca"]), vision_weight=float(sd["vision_weight"]),
+            seed=int(sd["seed"]),
+        )
+        tok.centroids = np.asarray(sd["centroids"], dtype=np.float32)
+        names = [str(n) for n in np.atleast_1d(sd["block_names"])]
+        tok._blocks = {}
+        for name in names:
+            nc = int(sd[f"{name}.n_components"])
+            b = Block(name, None if nc < 0 else nc)
+            b.mu = np.asarray(sd[f"{name}.mu"], dtype=np.float32)
+            b.scale = float(sd[f"{name}.scale"])
+            b.basis = (np.asarray(sd[f"{name}.basis"], dtype=np.float32)
+                       if f"{name}.basis" in sd else None)
+            tok._blocks[name] = b
+        tok.has_vision = "vision" in tok._blocks
+        return tok
+
     def encode_raw(self, raw: dict) -> np.ndarray:
         """Nearest centroid per row, for an already-built raw block dict."""
         if self.centroids is None:
