@@ -64,6 +64,9 @@ OVERWRITE=${OVERWRITE:-false}
 export OPENPI_DATA_HOME=${OPENPI_DATA_HOME:-${DATA_ROOT}/openpi_data}
 export XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.95}
 export PYTHONPATH="${EVENTTOK}${PYTHONPATH:+:${PYTHONPATH}}"
+# Python block-buffers stdout to a file at 8 KB, so the per-100-step loss and
+# mem_enc_norm lines sit invisible for hours while tqdm (stderr) shows progress.
+export PYTHONUNBUFFERED=1
 export ROBOMME_REPO="${ROBOMME}"
 mkdir -p /n/netscratch/ydu_lab/Lab/wfy/eventtok_cache/slurm
 

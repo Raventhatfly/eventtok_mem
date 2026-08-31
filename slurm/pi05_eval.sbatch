@@ -47,6 +47,9 @@ SAVE_DIR=${SAVE_DIR:-${CACHE}/evaluation}
 
 export OPENPI_DATA_HOME=${OPENPI_DATA_HOME:-${DATA_ROOT}/openpi_data}
 export PYTHONPATH="${EVENTTOK}${PYTHONPATH:+:${PYTHONPATH}}"
+# Python block-buffers stdout to a file at 8 KB, so the per-100-step loss and
+# mem_enc_norm lines sit invisible for hours while tqdm (stderr) shows progress.
+export PYTHONUNBUFFERED=1
 export ROBOMME_REPO="${ROBOMME}"
 export HF_HOME=${HF_HOME:-${CACHE}/hf}
 mkdir -p "${CACHE}/slurm" "${SAVE_DIR}" "${HF_HOME}"
