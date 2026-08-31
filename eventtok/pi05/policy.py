@@ -142,6 +142,7 @@ class EventMemoryPolicyMixin:
     def _prepare_history(self, inputs: dict) -> dict:
         self._ensure_log(inputs.get("prompt", ""))
         self._drain()
+        self._report()
         if self.event_mode == "blank" or self._event_log is None:
             inputs.update(self.event_feat.blank())
             return inputs
@@ -160,6 +161,23 @@ class EventMemoryPolicyMixin:
     def _chunk_start(self) -> int:
         """How many steps have actually been executed, per the observation buffer."""
         return max(self.step_idx + 1 - self.exec_start_idx, 0)
+
+    def _report(self, every: int = 20) -> None:
+        """Say what the log holds, periodically.
+
+        Without this a rollout where the memory silently stayed empty -- a wrong buffer
+        key, an exec-start offset off by one -- is indistinguishable from one where it
+        worked, and the success rate would be reported as a memory result either way.
+        """
+        self._calls = getattr(self, "_calls", 0) + 1
+        if self._calls % every:
+            return
+        st = self.event_state()
+        print(
+            f"[eventtok] step={self.step_idx} codes={st['codes']} "
+            f"log={st['tokens']} overflow={st['overflow']}",
+            flush=True,
+        )
 
     # ---------------------------------------------------------------- reporting
     def event_state(self) -> dict:

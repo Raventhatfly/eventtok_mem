@@ -77,8 +77,15 @@ cd "${ROBOMME}"
 
 SERVE_ARGS=(scripts/serve_policy.py --seed="${SEED}" --port="${PORT}"
             policy:checkpoint --policy.dir="${CKPT_DIR}" --policy.config="${CONFIG_TYPE}")
-[ -n "${EVENT_TAG:-}" ] && SERVE_ARGS=(-m eventtok.scripts.serve_pi05_event
-            --event-tag="${EVENT_TAG}" --event-mode="${EVENT_MODE:-log}" "${SERVE_ARGS[@]:1}")
+if [ -n "${EVENT_TAG:-}" ]; then
+    EVT=(-m eventtok.scripts.serve_pi05_event
+         --event-tag="${EVENT_TAG}" --event-mode="${EVENT_MODE:-log}")
+    # Pin the task when evaluating one at a time. Otherwise the server infers it from
+    # the prompt, and the action scale it picks is per task -- a wrong guess silently
+    # rescales every delta action before quantisation.
+    [ -n "${EVENT_TASK:-}" ] && EVT+=(--event-task="${EVENT_TASK}")
+    SERVE_ARGS=("${EVT[@]}" "${SERVE_ARGS[@]:1}")
+fi
 
 CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.85 \
     "${PY_SERVE}" "${SERVE_ARGS[@]}" &
