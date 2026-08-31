@@ -173,8 +173,12 @@ class EventMemoryPolicyMixin:
         if self._calls % every:
             return
         st = self.event_state()
+        # Say the mode. The log is maintained even under 'blank', which feeds the model
+        # an empty one -- so the contents printed here are what the policy *would* have
+        # seen, and without the label a blank run reads like a working one.
+        seen = "fed" if self.event_mode == "log" else f"withheld ({self.event_mode})"
         print(
-            f"[eventtok] step={self.step_idx} codes={st['codes']} "
+            f"[eventtok] step={self.step_idx} codes={st['codes']} {seen} "
             f"log={st['tokens']} overflow={st['overflow']}",
             flush=True,
         )
