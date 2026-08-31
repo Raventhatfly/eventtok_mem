@@ -1,0 +1,26 @@
+budget: 64
+num_views: 1
+token_per_image: 4
+streaming_obs_horizon: 16
+pool_type: mean
+use_pos_emb: true
+use_state_emb: true
+memory_feature:
+  img:
+    net: identity
+    input_dim: 256
+  pos:
+    input_dim: 64
+    hidden_dim: 128
+  state:
+    input_dim: 256
+    hidden_dim: 256
+integration_type: context
+memory_token_dim: 2048
+representation_type: perceptual
+perceptual_memory:
+  type: token_dropping
+event_memory:
+  n_symbols: 256
+  max_log: 64
+  pos_dim: 64

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from eventtok.pi05.config import history_config
-from eventtok.pi05.dataset import event_dataset_class
+from eventtok.pi05.dataset import EventMemoryMixin
 from eventtok.pi05.features import EventMemoryFeatures, slot_posemb
 from eventtok.pi05.tokens import EventLogCache, cache_path
 
@@ -93,9 +93,12 @@ class _FakeBase:
         return dict(self.rows[idx])
 
 
+class _EventFake(EventMemoryMixin, _FakeBase):
+    """Module level so it pickles, the way the real subclass has to."""
+
+
 def _make(rows, **kwargs):
-    cls = event_dataset_class(base=_FakeBase)
-    return cls(rows, None, None, 20, event_tag=TAG, **kwargs)
+    return _EventFake(rows, None, None, 20, event_tag=TAG, **kwargs)
 
 
 def test_frame_index_subtracts_exec_start(cache):
@@ -158,3 +161,25 @@ def test_all_task_shapes_are_consistent(cache):
         out = f(*cache[(e, t)])
         assert out["static_image_emb"].shape == (cache.max_log, cache.n_symbols)
         assert int(out["static_mask"].sum()) == min(cache[(e, t)][1], cache.max_log)
+
+
+def test_dataset_survives_a_pickle_roundtrip(cache):
+    """torch spawns data-loader workers and pickles the dataset to reach them.
+
+    A class defined inside a factory function fails here with "Can't pickle local
+    object" the moment ``num_workers > 0`` -- which is every real training run, and
+    which cost a GPU job that had already loaded 12 GB of weights.
+    """
+    import functools
+    import pickle
+
+    ep = int(cache.meta["train_episodes"][0])
+    rows = [{"epis_idx": ep, "step_idx": 250, "exec_start_idx": 0}]
+    ds = _make(rows)
+    back = pickle.loads(pickle.dumps(ds))
+    assert np.array_equal(back[0]["static_image_emb"], ds[0]["static_image_emb"])
+
+    # install() hands a functools.partial to the loader; that has to pickle too.
+    bound = functools.partial(_EventFake, event_tag=TAG, event_mode="log")
+    assert pickle.loads(pickle.dumps(bound))(rows, None, None, 20)[0]["static_mask"] \
+        .shape == (cache.max_log,)
