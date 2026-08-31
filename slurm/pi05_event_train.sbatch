@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:nvidia_h100_80gb_hbm3:2
 #SBATCH --mem=160G
 #SBATCH --time=1-00:00:00
 #SBATCH --requeue
@@ -25,6 +25,10 @@
 # EVENT_MODE=wrong is the control that decides whether any gain is real. If a log from
 # a different episode trains to the same success rate, the policy is ignoring the memory.
 #
+# 80 GB cards, not 40. pi0.5's train state is ~2.8 GB of parameters and jit reported
+# 48.7 GB of input/output arguments at init -- params, EMA and both Adam moments -- so
+# an A100-40GB dies in init_train_state before the first step, whatever the batch size.
+#
 # Preemption: --requeue plus RESUME=true. train.py checkpoints every SAVE_INTERVAL
 # steps through orbax and initialize_checkpoint_dir picks up the latest, so a requeue
 # costs at most SAVE_INTERVAL steps rather than the run.
@@ -43,7 +47,12 @@ EVENT_DROP=${EVENT_DROP:-0.0}
 HISTORY_CONFIG=${HISTORY_CONFIG:-${EVENTTOK}/configs/pi05/eventtok-${EVENT_TAG}-context.yaml}
 
 EXP_NAME=${EXP_NAME:-eventtok_${EVENT_TAG}_${EVENT_MODE}}
-BATCH_SIZE=${BATCH_SIZE:-16}
+# Our own space. The repo's runs/ckpts/mme_vla_suite is a symlink into another lab's
+# netscratch tree, and the home disk is 81% full against 11.7 GiB per checkpoint.
+CKPT_BASE=${CKPT_BASE:-/n/netscratch/ydu_lab/Lab/wfy/ckpts/robomme_policy_ckpt}
+# 32 to match pi05_baseline_2gpu_80k, which is the no-memory control. A different
+# batch size would confound the comparison with a trained checkpoint we already have.
+BATCH_SIZE=${BATCH_SIZE:-32}
 FSDP_DEVICES=${FSDP_DEVICES:-2}
 NUM_WORKERS=${NUM_WORKERS:-4}
 NUM_TRAIN_STEPS=${NUM_TRAIN_STEPS:-80000}
@@ -69,7 +78,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || tr
 
 # A first attempt has nothing to resume from; initialize_checkpoint_dir errors on
 # --resume with an empty directory, so only pass it once a checkpoint exists.
-CKPT_DIR=${CKPT_DIR:-${ROBOMME}/checkpoints/mme_vla_suite/${EXP_NAME}}
+CKPT_DIR=${CKPT_DIR:-${CKPT_BASE}/mme_vla_suite/${EXP_NAME}}
 ARGS=(
   mme_vla_suite
   --exp-name="${EXP_NAME}"
@@ -79,6 +88,7 @@ ARGS=(
   --save-interval="${SAVE_INTERVAL}"
   --fsdp-devices="${FSDP_DEVICES}"
   --dataset-path="${DATASET_PATH}"
+  --checkpoint-base-dir="${CKPT_BASE}"
   --model.use_history
   --model.history_config="${HISTORY_CONFIG}"
   --event-tag="${EVENT_TAG}"
